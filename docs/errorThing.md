@@ -10001,3 +10001,45 @@
 - 上下文：推送 README 双语改动后进行远端文件确认；加引号后 `gh api 'repos/RSXLX/focus-pet/contents/README.zh-CN.md?ref=main' --jq '.html_url'` 已返回 GitHub 文件地址。
 - 可能原因：忽略了 zsh 对未引用问号的 glob 解析。
 - 解决状态：已解决
+
+## [2026-07-02 10:00:50 CST]
+- 问题描述：Focus Pet Cloud 后端 TDD 红灯测试失败，`../src/cloud-service` 模块尚不存在。
+- 发生位置：`node --test --test-name-pattern='Focus Pet Cloud' test/core.test.js`
+- 上下文：新增 Cloud 后端测试契约后，按 TDD 要求先确认缺失实现会触发失败。
+- 可能原因：Focus Pet Cloud 后端尚未实现。
+- 解决状态：未解决
+
+## [2026-07-02 10:03:09 CST]
+- 问题描述：Focus Pet Cloud WebSocket 发送状态契约测试失败，当前实现使用了 `socket.OPEN`。
+- 发生位置：`src/cloud-service.js sendSocket()` / `node --test --test-name-pattern='Focus Pet Cloud exposes' test/core.test.js`
+- 上下文：补充 Cloud 后端部署入口测试时，要求 WebSocket 信令发送使用明确的 `socket.readyState !== 1` 判断，避免实例常量兼容性导致语音/视频信令无法送达。
+- 可能原因：沿用了局部 WebSocket 实例常量写法，而没有使用明确 readyState 数值。
+- 解决状态：未解决
+
+## [2026-07-02 10:03:29 CST]
+- 问题描述：Focus Pet Cloud 后端 TDD 红灯测试失败，`../src/cloud-service` 模块尚不存在。
+- 发生位置：`node --test --test-name-pattern='Focus Pet Cloud' test/core.test.js`
+- 上下文：已新增 `src/cloud-service.js`、`scripts/run-cloud-service.js`、Cloud 文档和 package 脚本；Cloud 定向测试 5 项已通过。
+- 可能原因：Focus Pet Cloud 后端尚未实现。
+- 解决状态：已解决
+
+## [2026-07-02 10:03:29 CST]
+- 问题描述：Focus Pet Cloud WebSocket 发送状态契约测试失败，当前实现使用了 `socket.OPEN`。
+- 发生位置：`src/cloud-service.js sendSocket()` / `node --test --test-name-pattern='Focus Pet Cloud exposes' test/core.test.js`
+- 上下文：已将 Cloud 信令发送判断改为 `socket.readyState !== 1`，补充测试已通过。
+- 可能原因：沿用了局部 WebSocket 实例常量写法，而没有使用明确 readyState 数值。
+- 解决状态：已解决
+
+## [2026-07-02 10:04:01 CST]
+- 问题描述：Focus Pet Cloud 部署入口契约测试失败，HTTP `/api/friends` 未显式保存新增好友关系。
+- 发生位置：`src/cloud-service.js handleApi()` / `node --test --test-name-pattern='Focus Pet Cloud exposes' test/core.test.js`
+- 上下文：补充测试要求 Cloud 后端在通过好友码建立双向关系后调用 `saveState(result.state)`，避免服务重启后关系丢失。
+- 可能原因：复用纯函数测试入口时传入了内存 `state`，导致 `addFriendByCode()` 按测试模式跳过自动保存。
+- 解决状态：未解决
+
+## [2026-07-02 10:04:20 CST]
+- 问题描述：Focus Pet Cloud 部署入口契约测试失败，HTTP `/api/friends` 未显式保存新增好友关系。
+- 发生位置：`src/cloud-service.js handleApi()` / `node --test --test-name-pattern='Focus Pet Cloud exposes' test/core.test.js`
+- 上下文：已在 HTTP `/api/friends` 分支中保存 `result.state`，Cloud 定向测试 5 项已通过。
+- 可能原因：复用纯函数测试入口时传入了内存 `state`，导致 `addFriendByCode()` 按测试模式跳过自动保存。
+- 解决状态：已解决

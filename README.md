@@ -44,6 +44,7 @@ macOS note: the current public build is ad-hoc signed but not Apple-notarized. O
 - Daily review: local 24-hour review with focus minutes, drift windows, task friction, and next actions.
 - Optional screen monitor: disabled by default; sends low-detail screenshots only when explicitly enabled.
 - Optional local social chat: invite link, browser peer, media messages, pet GIFs, and WebRTC signaling.
+- Optional Focus Pet Cloud backend: stable user IDs, friend codes, authenticated WebSocket signaling, and one-to-one WebRTC voice/video calls.
 - Low-memory runtime: optional chat, diagnostics, screen monitor, LLM self-check, WebSocket, and GIF previews load on demand.
 
 ## Privacy Model
@@ -77,6 +78,8 @@ Focus Pet separates asynchronous companion chat from realtime calls:
 - WeChat-style compact chat window (`微信式小聊天窗口`): supports text, media messages, pet GIF sharing, and voice messages (`语音消息`) recorded through `MediaRecorder`. The desktop UI supports press-and-hold recording (`按住说话`) and the voice shortcut (`语音快捷键`) `Alt+R`.
 - Realtime calls: realtime voice chat (`实时语音聊天`) and realtime video chat (`实时视频聊天`) use WebRTC. Session setup uses WebSocket signaling (`WebSocket 信令`), and TURN can be configured for NAT traversal.
 
+For public multi-user distribution, use Focus Pet Cloud instead of exposing each desktop directly. It provides stable user IDs, friend-code pairing, device-bound auth tokens, authenticated WebSocket signaling, and ICE/TURN configuration for one-to-one WebRTC voice/video. See [Focus Pet Cloud](docs/focus-pet-cloud.md).
+
 ## Quick Start From Source
 
 Requirements:
@@ -99,6 +102,7 @@ npm test
 npm run check
 npm run verify:pet-render
 npm run diagnostics
+npm run cloud:serve
 ```
 
 ## Release And Diagnostics Gates
@@ -204,6 +208,7 @@ docs/
 | Social security boundary | [docs/social-security-boundary.md](docs/social-security-boundary.md) |
 | Data recovery | [docs/storage-recovery.md](docs/storage-recovery.md) |
 | Diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
+| Focus Pet Cloud | [docs/focus-pet-cloud.md](docs/focus-pet-cloud.md) |
 | Optimization plan | [docs/optimization-plan.md](docs/optimization-plan.md) |
 | Release notes | [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md) |
 

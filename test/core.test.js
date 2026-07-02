@@ -25,6 +25,7 @@ const {
 const { DEFAULT_INTERVENTION_POLICY, focusStatusAffectsPetVitals, shouldShowIntervention } = require('../src/intervention-policy');
 const { appendActivityLog, buildReviewFromEntries, buildReviewActionSuggestions, buildTaskReview, buildTomorrowPlan, makeStatusMessage, mergeTomorrowPlanTasks } = require('../src/focus');
 const chatService = require('../src/chat-service');
+const cloudService = require('../src/cloud-service');
 const { normalizeMessage, reconcileQueuedMessages } = chatService;
 const { applyLaunchAtLogin, launchAtLoginState } = require('../src/launch-login');
 const { reviewLlmConfig, summarizeDailyReview } = require('../src/review-llm');
@@ -2963,6 +2964,125 @@ test('external chat records call lifecycle audit without storing SDP or ICE deta
 
   const serialized = JSON.stringify(ended.state.callAuditLog);
   assert.doesNotMatch(serialized, /secret-sdp-body|candidate:secret|turn\.example\.com|secret-pass|\"sdp\"|\"candidate\"/);
+});
+
+test('Focus Pet Cloud registers device-bound users with stable public ids', () => {
+  const state = cloudService.createInitialCloudState({ now: () => '2026-07-02T10:00:00.000Z' });
+  const result = cloudService.registerUser({ displayName: '小林', deviceId: 'device-A' }, {
+    state,
+    id: () => 'user_abc123',
+    token: () => 'cloud-token-a',
+    friendCode: () => 'FP-ABCD-1234',
+    now: () => '2026-07-02T10:00:00.000Z'
+  });
+
+  assert.equal(result.user.id, 'user_abc123');
+  assert.equal(result.user.friendCode, 'FP-ABCD-1234');
+  assert.equal(result.authToken, 'cloud-token-a');
+  assert.equal(result.state.users[0].deviceId, undefined);
+  assert.match(result.state.users[0].deviceIdHash, /^[a-f0-9]{64}$/);
+  assert.equal(cloudService.resolveUserAuth('cloud-token-a', result.state, { deviceId: 'device-A' }).userId, 'user_abc123');
+  assert.equal(cloudService.resolveUserAuth('cloud-token-a', result.state, { deviceId: 'device-B' }), null);
+});
+
+test('Focus Pet Cloud pairs users by friend code with reciprocal friendship', () => {
+  const state = cloudService.createInitialCloudState();
+  const alice = cloudService.registerUser({ displayName: 'Alice', deviceId: 'device-A' }, {
+    state,
+    id: () => 'user_alice',
+    token: () => 'token-a',
+    friendCode: () => 'FP-ALICE'
+  });
+  const bob = cloudService.registerUser({ displayName: 'Bob', deviceId: 'device-B' }, {
+    state: alice.state,
+    id: () => 'user_bob',
+    token: () => 'token-b',
+    friendCode: () => 'FP-BOB'
+  });
+  const pair = cloudService.addFriendByCode('FP-BOB', { state: bob.state, auth: { userId: 'user_alice' } });
+
+  assert.equal(pair.ok, true);
+  assert.deepEqual(pair.state.friendships.map(item => [item.userId, item.friendId]), [
+    ['user_alice', 'user_bob'],
+    ['user_bob', 'user_alice']
+  ]);
+  assert.deepEqual(cloudService.clientStateForUser({ userId: 'user_alice' }, pair.state).friends.map(friend => friend.id), ['user_bob']);
+});
+
+test('Focus Pet Cloud validates one-to-one WebRTC signaling between friends', () => {
+  const state = cloudService.createInitialCloudState();
+  state.users = [
+    { id: 'user_alice', displayName: 'Alice', friendCode: 'FP-ALICE', tokens: [] },
+    { id: 'user_bob', displayName: 'Bob', friendCode: 'FP-BOB', tokens: [] },
+    { id: 'user_eve', displayName: 'Eve', friendCode: 'FP-EVE', tokens: [] }
+  ];
+  state.friendships = [
+    { userId: 'user_alice', friendId: 'user_bob', createdAt: '2026-07-02T10:00:00.000Z' },
+    { userId: 'user_bob', friendId: 'user_alice', createdAt: '2026-07-02T10:00:00.000Z' }
+  ];
+
+  const offer = cloudService.normalizeCloudRealtimeEvent({
+    type: 'rtc-offer',
+    to: 'user_bob',
+    callId: 'call-1',
+    mode: 'video',
+    sdp: { type: 'offer', sdp: 'v=0' }
+  }, { userId: 'user_alice' }, state);
+
+  assert.equal(offer.event, 'rtc-offer');
+  assert.equal(offer.payload.from, 'user_alice');
+  assert.equal(offer.payload.to, 'user_bob');
+  assert.equal(offer.payload.mode, 'video');
+  assert.throws(() => cloudService.normalizeCloudRealtimeEvent({
+    type: 'rtc-offer',
+    to: 'user_eve',
+    callId: 'call-2',
+    mode: 'audio'
+  }, { userId: 'user_alice' }, state), /not friends/);
+});
+
+test('Focus Pet Cloud call audit omits SDP ICE and TURN details', () => {
+  const state = cloudService.createInitialCloudState();
+  const event = {
+    event: 'rtc-offer',
+    payload: {
+      from: 'user_alice',
+      to: 'user_bob',
+      callId: 'call-1',
+      mode: 'video',
+      sdp: { type: 'offer', sdp: 'secret-sdp' },
+      candidate: { candidate: 'candidate turn.example.com secret' }
+    }
+  };
+  const result = cloudService.recordCloudRealtimeAudit(event, 1, {
+    state,
+    now: () => '2026-07-02T10:00:00.000Z'
+  });
+
+  assert.equal(result.entry.event, 'rtc-offer');
+  assert.equal(result.entry.mode, 'video');
+  assert.doesNotMatch(JSON.stringify(result.state.callAuditLog), /secret-sdp|candidate|turn\.example\.com/);
+});
+
+test('Focus Pet Cloud exposes a Node-only backend entrypoint for public deployment', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  const source = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'cloud-service.js'), 'utf8');
+  const runner = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'run-cloud-service.js'), 'utf8');
+  const docs = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'focus-pet-cloud.md'), 'utf8');
+
+  assert.equal(packageJson.scripts['cloud:serve'], 'node scripts/run-cloud-service.js');
+  assert.match(packageJson.scripts.check, /src\/cloud-service\.js/);
+  assert.match(packageJson.scripts.check, /scripts\/run-cloud-service\.js/);
+  assert.match(runner, /cloudService\.start\(\)/);
+  assert.match(runner, /SIGTERM/);
+  assert.match(runner, /sanitizeLogText/);
+  assert.match(docs, /Focus Pet Cloud/);
+  assert.match(docs, /WebSocket 信令/);
+  assert.match(docs, /WebRTC/);
+  assert.match(docs, /TURN/);
+  assert.match(source, /socket\.readyState !== 1/);
+  assert.doesNotMatch(source, /socket\.OPEN/);
+  assert.match(source, /saveState\(result\.state\)/);
 });
 
 test('remote social client supports invite onboarding, messaging, and WebRTC calls', () => {
