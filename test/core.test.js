@@ -24,6 +24,13 @@ const {
 } = require('../src/focus-scene-templates');
 const { DEFAULT_INTERVENTION_POLICY, focusStatusAffectsPetVitals, shouldShowIntervention } = require('../src/intervention-policy');
 const { appendActivityLog, buildReviewFromEntries, buildReviewActionSuggestions, buildTaskReview, buildTomorrowPlan, makeStatusMessage, mergeTomorrowPlanTasks } = require('../src/focus');
+const {
+  DEFAULT_UPDATE_FEED_URL,
+  DEFAULT_UPDATE_PAGE_URL,
+  checkLatestVersion,
+  compareVersions: compareUpdateVersions,
+  normalizeUpdateFeedUrl
+} = require('../src/update-service');
 const chatService = require('../src/chat-service');
 const cloudService = require('../src/cloud-service');
 const { normalizeMessage, reconcileQueuedMessages } = chatService;
@@ -919,6 +926,11 @@ test('task and settings stores back up corrupt JSON before restoring usable stat
 
 test('settings store normalizes configurable behavior', () => {
   const store = createSettingsStore({ dataDir: tempDir('settings') });
+  const defaultSettings = store.getSettings();
+
+  assert.equal(defaultSettings.autoCheckUpdates, true);
+  assert.equal(defaultSettings.updateFeedUrl, DEFAULT_UPDATE_FEED_URL);
+
   const saved = store.updateSettings({
     popupCooldownMinutes: 0,
     idleNudgeMinutes: 120,
@@ -973,6 +985,114 @@ test('settings store normalizes configurable behavior', () => {
   assert.equal(defaults.voiceRecordShortcut, 'Alt+R');
   assert.equal(defaults.socialActivityShareLevel, 'presence');
   assert.equal(defaults.activityRetentionDays, 365);
+});
+
+test('update service detects newer GitHub releases and selects a platform download', async () => {
+  const requests = [];
+  const result = await checkLatestVersion({
+    currentVersion: '1.0.0',
+    feedUrl: DEFAULT_UPDATE_FEED_URL,
+    platform: 'darwin',
+    arch: 'arm64',
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          tag_name: 'v1.1.0',
+          html_url: 'https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0',
+          body: '稳定性改进',
+          assets: [
+            {
+              name: 'Focus-Pet-1.1.0-mac-arm64.zip',
+              browser_download_url: 'https://github.com/RSXLX/focus-pet/releases/download/v1.1.0/Focus-Pet-1.1.0-mac-arm64.zip'
+            },
+            {
+              name: 'Focus-Pet-1.1.0-mac-arm64.dmg',
+              browser_download_url: 'https://github.com/RSXLX/focus-pet/releases/download/v1.1.0/Focus-Pet-1.1.0-mac-arm64.dmg'
+            }
+          ]
+        })
+      };
+    }
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, DEFAULT_UPDATE_FEED_URL);
+  assert.equal(requests[0].options.cache, 'no-store');
+  assert.equal(result.ok, true);
+  assert.equal(result.currentVersion, '1.0.0');
+  assert.equal(result.latestVersion, '1.1.0');
+  assert.equal(result.available, true);
+  assert.equal(result.url, 'https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0');
+  assert.equal(result.downloadUrl, 'https://github.com/RSXLX/focus-pet/releases/download/v1.1.0/Focus-Pet-1.1.0-mac-arm64.dmg');
+  assert.equal(result.assetName, 'Focus-Pet-1.1.0-mac-arm64.dmg');
+  assert.equal(result.notes, '稳定性改进');
+});
+
+test('update service handles semver prefixes, generic feeds, and invalid feed urls', async () => {
+  assert.equal(compareUpdateVersions('v1.2.0', '1.1.9'), 1);
+  assert.equal(compareUpdateVersions('1.0.0', '1.0.0'), 0);
+  assert.equal(compareUpdateVersions('1.0.0-beta.1', '1.0.0'), -1);
+  assert.equal(normalizeUpdateFeedUrl('file:///tmp/latest.json'), DEFAULT_UPDATE_FEED_URL);
+
+  const result = await checkLatestVersion({
+    currentVersion: '1.2.0',
+    feedUrl: 'https://updates.example.com/focus-pet/latest.json',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        latestVersion: '1.2.0',
+        downloadUrl: 'https://updates.example.com/focus-pet/Focus-Pet-1.2.0.zip',
+        notes: '当前版本'
+      })
+    })
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.available, false);
+  assert.equal(result.latestVersion, '1.2.0');
+  assert.equal(result.url, 'https://updates.example.com/focus-pet/Focus-Pet-1.2.0.zip');
+});
+
+test('update service falls back to GitHub latest redirect when the API is rate limited', async () => {
+  const calls = [];
+  const result = await checkLatestVersion({
+    currentVersion: '1.0.0',
+    feedUrl: DEFAULT_UPDATE_FEED_URL,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url === DEFAULT_UPDATE_FEED_URL) {
+        return {
+          ok: false,
+          status: 403,
+          json: async () => ({ message: 'API rate limit exceeded' })
+        };
+      }
+      assert.equal(url, DEFAULT_UPDATE_PAGE_URL);
+      assert.equal(options.method, 'HEAD');
+      assert.equal(options.redirect, 'manual');
+      return {
+        ok: false,
+        status: 302,
+        headers: {
+          get: name => String(name).toLowerCase() === 'location'
+            ? 'https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0'
+            : ''
+        }
+      };
+    }
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.available, true);
+  assert.equal(result.latestVersion, '1.1.0');
+  assert.equal(result.url, 'https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0');
+  assert.equal(result.downloadUrl, '');
+  assert.equal(result.assetName, '');
 });
 
 test('activity log appends with a configurable retention window', () => {
@@ -3372,7 +3492,7 @@ test('settings page exposes local-first LLM provider controls', () => {
   assert.match(packageJson.scripts.check, /src\/llm-provider\.js/);
 });
 
-test('onboarding guide offers three modes and keeps advanced capabilities opt-in', () => {
+test('onboarding guide offers three modes and keeps AI/social capabilities opt-in', () => {
   const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
   const styles = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'styles.css'), 'utf8');
   const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
@@ -3398,7 +3518,7 @@ test('onboarding guide offers three modes and keeps advanced capabilities opt-in
   assert.match(styles, /\.onboarding-card/);
   assert.match(styles, /\.onboarding-card\[data-onboarding-default="off"\]/);
   assert.equal(settings.screenMonitorEnabled, false);
-  assert.equal(settings.autoCheckUpdates, false);
+  assert.equal(settings.autoCheckUpdates, true);
 });
 
 test('LLM self-check styles constrain long diagnostic text inside settings cards', () => {
@@ -6421,6 +6541,38 @@ test('desktop startup keeps diagnostics and screen monitor modules lazy', () => 
   assert.doesNotMatch(diagnostics, /const \{ rtcIceServerSummary \} = require\('\.\/chat-service'\)/);
   assert.match(diagnostics, /function getChatService\(\)/);
   assert.match(diagnostics, /getChatService\(\)\.rtcIceServerSummary/);
+});
+
+test('desktop update push is wired through GitHub release checks and notifications', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'preload.js'), 'utf8');
+  const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
+  const settingsStore = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'settings-store.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
+
+  assert.match(packageJson.scripts.check, /src\/update-service\.js/);
+  assert.match(settingsStore, /DEFAULT_UPDATE_FEED_URL/);
+  assert.match(settingsStore, /autoCheckUpdates:\s*true/);
+  assert.match(settingsStore, /updateFeedUrl:\s*DEFAULT_UPDATE_FEED_URL/);
+  assert.match(indexHtml, /更新源 URL[\s\S]*GitHub Release/);
+
+  assert.match(main, /Notification/);
+  assert.match(main, /checkLatestVersion/);
+  assert.match(main, /scheduleAutomaticUpdateChecks/);
+  assert.match(main, /lastNotifiedUpdateVersion/);
+  assert.match(main, /new Notification\(/);
+  assert.match(main, /ipcMain\.handle\('app:check-update'[\s\S]*checkForUpdate\(options/);
+  assert.match(main, /ipcMain\.handle\('app:open-update-download'[\s\S]*openUpdateDownload/);
+
+  assert.match(preload, /checkUpdate:\s*options => ipcRenderer\.invoke\('app:check-update', options\)/);
+  assert.match(preload, /openUpdateDownload:\s*update => ipcRenderer\.invoke\('app:open-update-download', update\)/);
+
+  assert.match(renderer, /async function checkUpdates\(options = \{\}\)/);
+  assert.match(renderer, /window\.focusPet\.checkUpdate\(\{ notify: options\.notify !== false \}\)/);
+  assert.match(renderer, /if \(result\.available && result\.url && options\.manual\)/);
+  assert.match(renderer, /window\.focusPet\.openUpdateDownload\(result\)/);
+  assert.match(renderer, /checkUpdatesButton\.addEventListener\('click', \(\) => checkUpdates\(\{ manual: true \}\)\)/);
 });
 
 test('expanded pet animations and interaction GIF exports are wired', () => {

@@ -18,20 +18,20 @@ Focus Pet is a medium-privacy desktop pet app for people who want lightweight fo
 ## Project Status
 
 - Public repository: [RSXLX/focus-pet](https://github.com/RSXLX/focus-pet)
-- Current release: [v1.0.0](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0)
+- Current release: [v1.0.1](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1)
 - Published binary: macOS Apple Silicon DMG and ZIP
 - Source support: macOS and Windows development scripts are included
 - Signing status: public macOS builds are ad-hoc signed and not Apple-notarized yet
 
 ## Downloads
 
-Latest release: [v1.0.0](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0)
+Latest release: [v1.0.1](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1)
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0) | Download the DMG for normal installation. |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0) | ZIP archive is also available. |
-| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0) | SHA-256 manifest is included. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1) | Download the DMG for normal installation. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1) | ZIP archive is also available. |
+| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1) | SHA-256 manifest is included. |
 
 macOS note: the current public build is ad-hoc signed but not Apple-notarized. On first launch, macOS Gatekeeper may require manual approval in System Settings or via right-click Open.
 
@@ -45,6 +45,7 @@ macOS note: the current public build is ad-hoc signed but not Apple-notarized. O
 - Optional screen monitor: disabled by default; sends low-detail screenshots only when explicitly enabled.
 - Optional local social chat: invite links, web client, media messages, pet GIFs, and WebRTC signaling.
 - Optional Focus Pet Cloud backend: stable user IDs, friend codes, authenticated WebSocket signaling, and one-to-one WebRTC voice/video calls.
+- Update notifications: checks the GitHub Release feed and notifies when a newer DMG/ZIP is available; installation remains user-driven.
 - Low-memory runtime: optional chat, diagnostics, screen monitor, LLM self-check, WebSocket, and GIF previews load on demand.
 
 ## Privacy Model
@@ -213,7 +214,7 @@ docs/
 | Diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
 | Focus Pet Cloud | [docs/focus-pet-cloud.md](docs/focus-pet-cloud.md) |
 | Optimization plan | [docs/optimization-plan.md](docs/optimization-plan.md) |
-| Release notes | [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md) |
+| Release notes | [docs/releases/v1.0.1.md](docs/releases/v1.0.1.md) |
 
 ## Development Notes
 

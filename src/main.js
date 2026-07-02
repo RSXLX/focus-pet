@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, Notification, desktopCapturer, ipcMain, screen, session, shell, systemPreferences } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const focus = require('./focus');
@@ -6,6 +6,7 @@ const { writeRuntimeLog, sanitizeLogText } = require('./runtime-logger');
 const { appendJsonlWithRetention } = require('./jsonl-retention');
 const { applyLaunchAtLogin, launchAtLoginState } = require('./launch-login');
 const { platformSettingsProfile, platformSettingsTarget } = require('./platform-support');
+const { DEFAULT_UPDATE_FEED_URL, DEFAULT_UPDATE_PAGE_URL, checkLatestVersion } = require('./update-service');
 const packageJson = require('../package.json');
 
 let mainWindow;
@@ -16,9 +17,14 @@ let chatRuntime = null;
 let diagnosticsModule = null;
 let screenMonitorModule = null;
 let llmSelfCheckModule = null;
+let updateCheckTimer = null;
+let updateStartupTimer = null;
+let lastNotifiedUpdateVersion = '';
 const STOP_MARKER_PATH = path.join(focus.DATA_DIR, 'focus-pet.stop');
 const ERROR_LOG_PATH = path.join(path.resolve(__dirname, '..'), 'docs', 'errorThing.md');
 const APP_ICON_PNG = path.join(__dirname, 'assets', 'app-icon', 'icon.png');
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const UPDATE_STARTUP_DELAY_MS = 15_000;
 const PET_GIF_DIR = path.join(__dirname, 'assets', 'pets', 'nervy-sci-fi-kid', 'gifs');
 const PET_GIF_ASSETS = [
   { key: 'tap-heart', label: '摸摸爱心', file: 'tap-heart.gif', sourceType: 'generated-image-pack' },
@@ -362,33 +368,68 @@ function installMediaPermissionHandler() {
   });
 }
 
-function compareVersions(left, right) {
-  const a = String(left || '0.0.0').split('.').map(Number);
-  const b = String(right || '0.0.0').split('.').map(Number);
-  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
-    const diff = (a[index] || 0) - (b[index] || 0);
-    if (diff) return diff;
+function safeExternalUrl(value) {
+  const text = String(value || '').trim();
+  if (!/^https?:\/\//i.test(text)) return '';
+  try {
+    return new URL(text).toString();
+  } catch {
+    return '';
   }
-  return 0;
 }
 
-async function checkForUpdate() {
+async function openUpdateDownload(update = {}) {
+  const url = safeExternalUrl(update.url || update.pageUrl || update.downloadUrl || DEFAULT_UPDATE_PAGE_URL);
+  if (!url) return false;
+  await shell.openExternal(url);
+  return true;
+}
+
+function showUpdateNotification(result = {}) {
+  if (!result.available || !result.latestVersion) return false;
+  if (lastNotifiedUpdateVersion === result.latestVersion) return false;
+  lastNotifiedUpdateVersion = result.latestVersion;
+  if (typeof Notification.isSupported === 'function' && !Notification.isSupported()) return false;
+
+  const notification = new Notification({
+    title: 'Focus Pet 有新版本',
+    body: `${result.latestVersion} 已发布，点击打开下载页。`,
+    icon: APP_ICON_PNG
+  });
+  notification.on('click', () => {
+    openUpdateDownload(result).catch(error => logMain(`open update download failed: ${error.stack || error.message}`, 'warn'));
+  });
+  notification.show();
+  return true;
+}
+
+async function checkForUpdate(options = {}) {
   const settings = focus.getSettings();
-  if (!settings.updateFeedUrl) {
-    return { ok: false, reason: '未配置更新源', currentVersion: packageJson.version };
-  }
-  const response = await fetch(settings.updateFeedUrl, { cache: 'no-store' });
-  if (!response.ok) throw new Error(`更新源请求失败：${response.status}`);
-  const payload = await response.json();
-  const latestVersion = String(payload.version || payload.latestVersion || '');
-  return {
-    ok: true,
+  const result = await checkLatestVersion({
     currentVersion: packageJson.version,
-    latestVersion,
-    available: compareVersions(latestVersion, packageJson.version) > 0,
-    url: payload.url || payload.downloadUrl || '',
-    notes: payload.notes || ''
+    feedUrl: settings.updateFeedUrl || DEFAULT_UPDATE_FEED_URL,
+    platform: process.platform,
+    arch: process.arch
+  });
+  const notified = options.notify ? showUpdateNotification(result) : false;
+  return { ...result, notified };
+}
+
+function scheduleAutomaticUpdateChecks(settings = focus.getSettings()) {
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  if (updateStartupTimer) clearTimeout(updateStartupTimer);
+  updateCheckTimer = null;
+  updateStartupTimer = null;
+  if (!settings.autoCheckUpdates) return;
+
+  const run = () => {
+    checkForUpdate({ notify: true, source: 'auto' })
+      .catch(error => logMain(`auto update check failed: ${error.stack || error.message}`, 'warn'));
   };
+  updateCheckTimer = setInterval(run, UPDATE_CHECK_INTERVAL_MS);
+  updateStartupTimer = setTimeout(run, UPDATE_STARTUP_DELAY_MS);
+  if (typeof updateCheckTimer.unref === 'function') updateCheckTimer.unref();
+  if (typeof updateStartupTimer.unref === 'function') updateStartupTimer.unref();
 }
 
 function petGifAssetPath(asset) {
@@ -527,6 +568,7 @@ app.whenReady().then(() => {
   installMediaPermissionHandler();
   applyLaunchAtLogin(app, focus.getSettings(), { path: process.execPath });
   createWindow();
+  scheduleAutomaticUpdateChecks(focus.getSettings());
 
   ipcMain.handle('focus:get-status', () => focus.getStatus());
   ipcMain.handle('focus:get-review', () => focus.getDailyReview());
@@ -554,6 +596,7 @@ app.whenReady().then(() => {
     const settings = focus.updateSettings(patch);
     syncChatSettingsIfLoaded(settings);
     const launchState = applyLaunchAtLogin(app, settings, { path: process.execPath });
+    scheduleAutomaticUpdateChecks(settings);
     return {
       ...settings,
       ...launchState,
@@ -575,7 +618,8 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('app:open-accessibility-settings', () => openPlatformSettings('accessibility'));
   ipcMain.handle('app:open-screen-recording-settings', () => openPlatformSettings('screen-recording'));
-  ipcMain.handle('app:check-update', () => checkForUpdate());
+  ipcMain.handle('app:check-update', (_event, options = {}) => checkForUpdate(options));
+  ipcMain.handle('app:open-update-download', (_event, update = {}) => openUpdateDownload(update));
   ipcMain.handle('app:get-pet-gifs', () => listPetGifs());
   ipcMain.handle('app:share-pet-gif', (_event, key) => sharePetGif(key));
   ipcMain.handle('app:open-pet-gif-folder', () => openPetGifFolder());
@@ -645,6 +689,8 @@ app.on('before-quit', () => {
   requestSupervisorStop('quit');
   isQuitting = true;
   if (keepAliveTimer) clearInterval(keepAliveTimer);
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  if (updateStartupTimer) clearTimeout(updateStartupTimer);
   stopChatService();
 });
 

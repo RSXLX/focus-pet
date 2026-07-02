@@ -3,6 +3,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { readJsonWithRecovery, writeJsonAtomic } = require('./json-storage');
 const { normalizeLlmCloudMode, normalizeLlmProvider } = require('./llm-provider');
+const { DEFAULT_UPDATE_FEED_URL, normalizeUpdateFeedUrl } = require('./update-service');
 
 const DATA_DIR = path.join(os.homedir(), '.hermes', 'focus-watchdog');
 const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
@@ -20,8 +21,8 @@ const DEFAULT_SETTINGS = {
   maxMediaMb: 25,
   petBehaviorIntensity: 'normal',
   launchAtLogin: false,
-  autoCheckUpdates: false,
-  updateFeedUrl: '',
+  autoCheckUpdates: true,
+  updateFeedUrl: DEFAULT_UPDATE_FEED_URL,
   llmCloudMode: 'allowed',
   screenMonitorProvider: 'openai-compatible',
   screenMonitorEnabled: false,
@@ -128,7 +129,7 @@ function normalizeSettings(input = {}) {
     petBehaviorIntensity: ['calm', 'normal', 'active'].includes(settings.petBehaviorIntensity) ? settings.petBehaviorIntensity : DEFAULT_SETTINGS.petBehaviorIntensity,
     launchAtLogin: Boolean(settings.launchAtLogin),
     autoCheckUpdates: Boolean(settings.autoCheckUpdates),
-    updateFeedUrl: /^https?:\/\//.test(String(settings.updateFeedUrl || '').trim()) ? String(settings.updateFeedUrl).trim() : '',
+    updateFeedUrl: normalizeUpdateFeedUrl(settings.updateFeedUrl),
     llmCloudMode: normalizeLlmCloudMode(settings.llmCloudMode),
     screenMonitorProvider: normalizeLlmProvider(settings.screenMonitorProvider),
     screenMonitorEnabled: Boolean(settings.screenMonitorEnabled),

@@ -6406,14 +6406,14 @@ async function loadSettings() {
 function scheduleUpdateChecks() {
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   updateCheckTimer = null;
-  if (!appSettings.autoCheckUpdates || !appSettings.updateFeedUrl) return;
+  if (!appSettings.autoCheckUpdates) return;
   updateCheckTimer = setInterval(checkUpdates, 6 * 60 * 60 * 1000);
-  checkUpdates();
+  checkUpdates({ notify: true });
 }
 
-async function checkUpdates() {
+async function checkUpdates(options = {}) {
   try {
-    const result = await window.focusPet.checkUpdate();
+    const result = await window.focusPet.checkUpdate({ notify: options.notify !== false });
     if (!result.ok) {
       updateResult.textContent = result.reason || '没有可用更新源。';
       return;
@@ -6421,7 +6421,7 @@ async function checkUpdates() {
     updateResult.textContent = result.available
       ? `发现 ${result.latestVersion}：${result.notes || '可下载新版本'}`
       : `当前已是最新版本 ${result.currentVersion}`;
-    if (result.available && result.url) await window.focusPet.openExternal(result.url);
+    if (result.available && result.url && options.manual) await window.focusPet.openUpdateDownload(result);
   } catch (error) {
     updateResult.textContent = `检查失败：${error.message}`;
   }
@@ -6782,7 +6782,7 @@ newTaskPriority.addEventListener('change', clearTaskComposerFeedback);
 newTaskScene.addEventListener('change', clearTaskComposerFeedback);
 newTaskDue.addEventListener('input', clearTaskComposerFeedback);
 saveSettingsButton.addEventListener('click', saveSettings);
-checkUpdatesButton.addEventListener('click', checkUpdates);
+checkUpdatesButton.addEventListener('click', () => checkUpdates({ manual: true }));
 testLlmConnectivityButton.addEventListener('click', testLlmConnectivity);
 refreshPermissionsButton.addEventListener('click', loadPermissionGuide);
 openPermissionsButton.addEventListener('click', () => window.focusPet.openAccessibilitySettings());

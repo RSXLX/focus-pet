@@ -10267,3 +10267,31 @@
 - 上下文：已使用极简半身 logo 重新构建 `Focus-Pet-1.0.0-mac-arm64.dmg`、`.zip` 和 manifest，并重新上传到 GitHub Release v1.0.0；远端资产列表已恢复三件套。
 - 可能原因：GitHub CLI 的 `--clobber` 会先替换/删除同名资产，命令被中断时大文件尚未重新上传完成。
 - 解决状态：已解决
+
+## [2026-07-02 12:07:47 CST]
+- 问题描述：推送更新功能契约测试红灯，缺少 `src/update-service.js` 更新服务模块。
+- 发生位置：`test/core.test.js`；`node --test --test-name-pattern "update" test/core.test.js`
+- 上下文：新增测试要求提供默认 GitHub Release 更新源、版本比较和更新检查服务，但当前仓库只有 renderer/main 中的基础占位逻辑。
+- 可能原因：此前只有设置页入口和简单 fetch 检查，没有独立可测试的更新服务。
+- 解决状态：未解决
+
+## [2026-07-02 12:13:01 CST]
+- 问题描述：推送更新功能契约测试红灯，缺少 `src/update-service.js` 更新服务模块。
+- 发生位置：`test/core.test.js`；`node --test --test-name-pattern "update" test/core.test.js`
+- 上下文：已新增 `src/update-service.js`，默认使用 GitHub Release 更新源，支持版本比较、Release asset 选择、主进程系统通知、手动打开下载页和设置项接线；目标更新测试已通过。
+- 可能原因：此前只有设置页入口和简单 fetch 检查，没有独立可测试的更新服务。
+- 解决状态：已解决
+
+## [2026-07-02 12:13:39 CST]
+- 问题描述：默认 GitHub Release 更新源实测返回 403，自动更新检查无法确认最新版本。
+- 发生位置：`src/update-service.js checkLatestVersion`；`node -e "const { checkLatestVersion } = require('./src/update-service'); ..."`
+- 上下文：目标测试使用 mock fetch 已通过，但真实请求 `https://api.github.com/repos/RSXLX/focus-pet/releases/latest` 返回 `更新源请求失败：403`。
+- 可能原因：GitHub API 对无 User-Agent、限流或未认证请求返回 403；当前请求头只设置了 `accept`。
+- 解决状态：未解决
+
+## [2026-07-02 12:15:21 CST]
+- 问题描述：默认 GitHub Release 更新源实测返回 403，自动更新检查无法确认最新版本。
+- 发生位置：`src/update-service.js checkLatestVersion`；`node -e "const { checkLatestVersion } = require('./src/update-service'); ..."`
+- 上下文：已增加 GitHub API 403/限流回退逻辑，通过 `https://github.com/RSXLX/focus-pet/releases/latest` 的跳转目标解析最新 tag；真实检查返回 `latestVersion=1.0.0`、`available=false`。
+- 可能原因：GitHub API 对无 User-Agent、限流或未认证请求返回 403；当前请求头只设置了 `accept`。
+- 解决状态：已解决
