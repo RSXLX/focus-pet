@@ -8,6 +8,7 @@ APP_NAME = "focus-pet-cloud"
 CLOUD_PORT = 47821
 DATA_MOUNT = "/data"
 DATA_DIR = f"{DATA_MOUNT}/focus-pet-cloud"
+STEPFUN_SECRET_NAME = "focus-pet-cloud-stepfun"
 
 
 def ignore_local_path(path):
@@ -21,12 +22,32 @@ def ignore_local_path(path):
         "tmp",
         "release",
     }
-    return any(part in ignored_names for part in path.parts)
+    ignored_paths = {
+        ("docs", "errorThing.md"),
+    }
+    parts = tuple(path.parts)
+    return any(part in ignored_names for part in parts) or any(parts[-len(item):] == item for item in ignored_paths)
 
 
 app = modal.App("focus-pet-cloud")
 
 data_volume = modal.Volume.from_name("focus-pet-cloud-data", create_if_missing=True)
+modal_secrets = [modal.Secret.from_name(STEPFUN_SECRET_NAME)]
+cloud_env = {
+    "FOCUS_PET_CLOUD_HOST": "0.0.0.0",
+    "FOCUS_PET_CLOUD_PORT": str(CLOUD_PORT),
+    "FOCUS_PET_CLOUD_DATA_DIR": DATA_DIR,
+}
+
+for key in (
+    "FOCUS_PET_CLOUD_PUBLIC_URL",
+    "FOCUS_PET_CLOUD_SCREEN_LLM_ENDPOINT",
+    "FOCUS_PET_CLOUD_STEPFUN_ENDPOINT",
+    "FOCUS_PET_CLOUD_SCREEN_LLM_MODEL",
+    "FOCUS_PET_CLOUD_SCREEN_CHECK_RATE_LIMIT_MAX",
+):
+    if os.environ.get(key):
+        cloud_env[key] = os.environ[key]
 
 image = (
     modal.Image.from_registry("node:22-slim", add_python="3.12")
@@ -38,11 +59,8 @@ image = (
 @app.function(
     image=image,
     volumes={DATA_MOUNT: data_volume},
-    env={
-        "FOCUS_PET_CLOUD_HOST": "0.0.0.0",
-        "FOCUS_PET_CLOUD_PORT": str(CLOUD_PORT),
-        "FOCUS_PET_CLOUD_DATA_DIR": DATA_DIR,
-    },
+    env=cloud_env,
+    secrets=modal_secrets,
     min_containers=1,
     max_containers=1,
     timeout=86400,

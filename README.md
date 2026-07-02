@@ -42,11 +42,11 @@ macOS note: the current public build is ad-hoc signed but not Apple-notarized. O
 - Task system: current task, priority, deadline, next step, blocker, related apps, and related keywords.
 - Pet feedback: mood, energy, bond, care actions, full-body animations, and chat GIF sharing.
 - Daily review: local 24-hour review with focus minutes, drift windows, task friction, and next actions.
-- Optional screen monitor: disabled by default; sends low-detail screenshots only when explicitly enabled.
+- Optional screen check: disabled by default; can use Focus Pet Cloud as a server-side StepFun proxy so downloaded apps do not embed API keys; sends low-detail screenshots only when explicitly enabled or manually tested.
 - Optional local social chat: invite links, web client, media messages, pet GIFs, and WebRTC signaling.
-- Optional Focus Pet Cloud backend: stable user IDs, friend codes, authenticated WebSocket signaling, and one-to-one WebRTC voice/video calls.
+- Optional Focus Pet Cloud backend: stable user IDs, friend codes, authenticated WebSocket signaling, one-to-one WebRTC voice/video calls, and server-side screen check proxying.
 - Update notifications: checks the GitHub Release feed and notifies when a newer DMG/ZIP is available; installation remains user-driven.
-- Low-memory runtime: optional chat, diagnostics, screen monitor, LLM self-check, WebSocket, and GIF previews load on demand.
+- Low-memory runtime: optional chat, diagnostics, screen check, LLM self-check, WebSocket, and GIF previews load on demand.
 
 ## Privacy Model
 
@@ -70,7 +70,7 @@ By default, it may store locally:
 - pet state;
 - review summaries.
 
-Optional capabilities such as screen monitor, LLM review, external chat, and WebRTC must be enabled or configured by the user. Details are documented in [system overview](docs/system-overview.md), [social security boundary](docs/social-security-boundary.md), and [diagnostics](docs/diagnostics.md).
+Optional capabilities such as screen check, LLM review, external chat, and WebRTC must be enabled or configured by the user. Details are documented in [system overview](docs/system-overview.md), [social security boundary](docs/social-security-boundary.md), and [diagnostics](docs/diagnostics.md).
 
 ## Social Chat Modes
 
@@ -107,7 +107,7 @@ npm run cloud:serve
 npm run cloud:deploy:modal
 ```
 
-`npm run cloud:deploy:modal` deploys the optional Focus Pet Cloud backend to Modal for public HTTPS/WSS signaling. GitHub Pages can host a static website or download page, but it cannot run the Node/WebSocket backend used for realtime voice/video signaling. See [Focus Pet Cloud](docs/focus-pet-cloud.md).
+`npm run cloud:deploy:modal` deploys the optional Focus Pet Cloud backend to Modal for public HTTPS/WSS signaling and server-side screen checks. Store StepFun keys in Modal secrets or backend environment variables, never in the desktop app. GitHub Pages can host a static website or download page, but it cannot run the Node/WebSocket backend used for realtime voice/video signaling. See [Focus Pet Cloud](docs/focus-pet-cloud.md).
 
 ## Release And Diagnostics Gates
 
@@ -164,7 +164,7 @@ On macOS, Focus Pet needs Accessibility permission to read the current foregroun
 System Settings -> Privacy & Security -> Accessibility
 ```
 
-If optional screen monitor is enabled, macOS also requires Screen Recording permission:
+If optional screen check is enabled, macOS also requires Screen Recording permission:
 
 ```text
 System Settings -> Privacy & Security -> Screen Recording

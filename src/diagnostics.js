@@ -142,10 +142,12 @@ function summarizeSettings(settings = {}, env = process.env) {
       enabled: bool(settings.screenMonitorEnabled),
       provider: screenProvider.provider,
       localProvider: screenProvider.localProvider,
+      transport: settings.screenCheckTransport || 'auto',
+      cloudEndpointConfigured: bool(settings.screenCheckCloudUrl),
       endpointConfigured: bool(settings.screenMonitorEndpoint),
       modelConfigured: bool(settings.screenMonitorModel),
       apiKeyRequired: screenProvider.apiKeyRequired,
-      apiKeyConfigured: bool(env.FOCUS_PET_LLM_API_KEY || env.OPENAI_API_KEY)
+      apiKeyConfigured: bool(env.FOCUS_PET_SCREEN_LLM_API_KEY || env.FOCUS_PET_LLM_API_KEY || env.FOCUS_PET_STEPFUN_API_KEY || env.STEPFUN_API_KEY || env.STEP_API_KEY || env.OPENAI_API_KEY)
     },
     reviewLlm: {
       enabled: settings.reviewLlmEnabled !== false,

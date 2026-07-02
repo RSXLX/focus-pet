@@ -6,6 +6,15 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { WebSocketServer } = require('ws');
 const { readJsonWithRecovery, writeJsonAtomic } = require('./json-storage');
+const {
+  DEFAULT_STEPFUN_ENDPOINT,
+  DEFAULT_STEPFUN_SCREEN_MODEL,
+  normalizeChatEndpoint
+} = require('./llm-provider');
+const {
+  callVisionModel,
+  statusMessage
+} = require('./screen-monitor');
 
 const DEFAULT_DATA_DIR = path.join(os.homedir(), '.hermes', 'focus-pet-cloud');
 const DATA_DIR = path.resolve(process.env.FOCUS_PET_CLOUD_DATA_DIR || DEFAULT_DATA_DIR);
@@ -15,6 +24,10 @@ const DEFAULT_PORT = readPort(process.env.FOCUS_PET_CLOUD_PORT, process.env.PORT
 const CLOUD_STATE_VERSION = 1;
 const DEFAULT_RTC_ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 const CALL_AUDIT_LOG_LIMIT = 500;
+const DEFAULT_SCREEN_CHECK_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const DEFAULT_SCREEN_CHECK_TIMEOUT_MS = 15_000;
+const DEFAULT_SCREEN_CHECK_RATE_LIMIT_WINDOW_MS = 60_000;
+const DEFAULT_SCREEN_CHECK_RATE_LIMIT_MAX = 20;
 const REALTIME_EVENTS = new Set([
   'call-invite',
   'call-answer',
@@ -33,6 +46,7 @@ let host = DEFAULT_HOST;
 let serverProtocol = 'http';
 let readyPromise = Promise.resolve(null);
 const clients = new Map();
+const screenCheckRateBuckets = new Map();
 
 function readPort(...values) {
   for (const value of values) {
@@ -41,6 +55,12 @@ function readPort(...values) {
     if (Number.isInteger(candidate) && candidate >= 0 && candidate <= 65535) return candidate;
   }
   return 47821;
+}
+
+function readBoundedInteger(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(number)));
 }
 
 function nowIso(options = {}) {
@@ -69,6 +89,10 @@ function secretHash(value) {
 
 function cleanDisplayName(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 40) || 'Focus Pet User';
+}
+
+function cleanText(value, maxLength = 200) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
 function cleanCode(value) {
@@ -374,6 +398,227 @@ function rtcIceServerSummary(env = process.env) {
   };
 }
 
+function cloudScreenCheckTimeoutMs(env = process.env) {
+  return readBoundedInteger(
+    env.FOCUS_PET_CLOUD_SCREEN_CHECK_TIMEOUT_MS,
+    DEFAULT_SCREEN_CHECK_TIMEOUT_MS,
+    1000,
+    60_000
+  );
+}
+
+function cloudScreenCheckMaxImageBytes(env = process.env) {
+  return readBoundedInteger(
+    env.FOCUS_PET_CLOUD_SCREEN_CHECK_MAX_IMAGE_BYTES,
+    DEFAULT_SCREEN_CHECK_MAX_IMAGE_BYTES,
+    64 * 1024,
+    12 * 1024 * 1024
+  );
+}
+
+function cloudScreenCheckMaxBodyBytes(env = process.env) {
+  return readBoundedInteger(
+    env.FOCUS_PET_CLOUD_SCREEN_CHECK_MAX_BODY_BYTES,
+    cloudScreenCheckMaxImageBytes(env) + 32 * 1024,
+    128 * 1024,
+    16 * 1024 * 1024
+  );
+}
+
+function cloudScreenCheckRateLimitConfig(env = process.env) {
+  return {
+    windowMs: readBoundedInteger(
+      env.FOCUS_PET_CLOUD_SCREEN_CHECK_RATE_LIMIT_WINDOW_MS,
+      DEFAULT_SCREEN_CHECK_RATE_LIMIT_WINDOW_MS,
+      1000,
+      10 * 60_000
+    ),
+    max: readBoundedInteger(
+      env.FOCUS_PET_CLOUD_SCREEN_CHECK_RATE_LIMIT_MAX,
+      DEFAULT_SCREEN_CHECK_RATE_LIMIT_MAX,
+      1,
+      240
+    )
+  };
+}
+
+function cloudScreenCheckLlmConfig(env = process.env) {
+  const endpoint = normalizeChatEndpoint(
+    env.FOCUS_PET_CLOUD_SCREEN_LLM_ENDPOINT
+    || env.FOCUS_PET_CLOUD_STEPFUN_ENDPOINT
+    || DEFAULT_STEPFUN_ENDPOINT,
+    { provider: 'stepfun' }
+  );
+  const model = cleanText(
+    env.FOCUS_PET_CLOUD_SCREEN_LLM_MODEL
+    || env.FOCUS_PET_SCREEN_LLM_MODEL
+    || DEFAULT_STEPFUN_SCREEN_MODEL,
+    120
+  );
+  const apiKey = String(
+    env.FOCUS_PET_CLOUD_STEPFUN_API_KEY
+    || env.FOCUS_PET_CLOUD_SCREEN_LLM_API_KEY
+    || env.FOCUS_PET_SCREEN_LLM_API_KEY
+    || env.FOCUS_PET_STEPFUN_API_KEY
+    || env.STEPFUN_API_KEY
+    || env.STEP_API_KEY
+    || ''
+  ).trim();
+  const missing = [];
+  if (!endpoint) missing.push('endpoint');
+  if (!model) missing.push('model');
+  if (!apiKey) missing.push('apiKey');
+  return {
+    provider: 'stepfun',
+    endpoint,
+    model,
+    apiKey,
+    configured: missing.length === 0,
+    missing
+  };
+}
+
+function normalizeCloudScreenCheckPayload(input = {}, options = {}) {
+  const imageInput = input.image && typeof input.image === 'object' ? input.image : input;
+  const dataUrl = String(imageInput.dataUrl || input.dataUrl || '').trim();
+  if (!/^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i.test(dataUrl)) {
+    const error = new Error('image dataUrl required');
+    error.statusCode = 400;
+    throw error;
+  }
+  const maxImageBytes = options.maxImageBytes || DEFAULT_SCREEN_CHECK_MAX_IMAGE_BYTES;
+  if (Buffer.byteLength(dataUrl, 'utf8') > maxImageBytes) {
+    const error = new Error('image dataUrl too large');
+    error.statusCode = 413;
+    throw error;
+  }
+  const currentTask = input.currentTask && typeof input.currentTask === 'object'
+    ? { text: cleanText(input.currentTask.text, 160) }
+    : null;
+  const frontmost = input.frontmost && typeof input.frontmost === 'object'
+    ? {
+      app: cleanText(input.frontmost.app, 80),
+      title: cleanText(input.frontmost.title, 140)
+    }
+    : {};
+  return {
+    image: {
+      dataUrl,
+      sourceName: cleanText(imageInput.sourceName, 80) || 'Screen',
+      size: imageInput.size && typeof imageInput.size === 'object'
+        ? {
+          width: Math.max(0, Math.round(Number(imageInput.size.width) || 0)),
+          height: Math.max(0, Math.round(Number(imageInput.size.height) || 0))
+        }
+        : null
+    },
+    currentTask,
+    frontmost
+  };
+}
+
+function screenCheckClientAddress(req = {}) {
+  const forwarded = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded || String(req.socket?.remoteAddress || 'unknown');
+}
+
+function screenCheckRateLimitKey(req = {}) {
+  const deviceId = deviceIdFromRequest(req);
+  return secretHash(`${deviceId || 'anonymous'}|${screenCheckClientAddress(req)}`);
+}
+
+function consumeCloudScreenCheckRateLimit(key, options = {}) {
+  const config = cloudScreenCheckRateLimitConfig(options.env || process.env);
+  const nowMs = Date.parse(nowIso(options));
+  const currentMs = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const existing = screenCheckRateBuckets.get(key);
+  if (!existing || currentMs - existing.windowStartMs >= config.windowMs) {
+    screenCheckRateBuckets.set(key, { windowStartMs: currentMs, count: 1 });
+    return { allowed: true, remaining: Math.max(0, config.max - 1), limit: config.max, windowMs: config.windowMs };
+  }
+  if (existing.count >= config.max) {
+    const retryAfterMs = Math.max(0, config.windowMs - (currentMs - existing.windowStartMs));
+    return {
+      allowed: false,
+      remaining: 0,
+      limit: config.max,
+      windowMs: config.windowMs,
+      retryAfterSeconds: Math.ceil(retryAfterMs / 1000)
+    };
+  }
+  existing.count += 1;
+  return {
+    allowed: true,
+    remaining: Math.max(0, config.max - existing.count),
+    limit: config.max,
+    windowMs: config.windowMs
+  };
+}
+
+async function handleCloudScreenCheck({
+  body = {},
+  env = process.env,
+  fetchImpl = fetch,
+  now = () => new Date(),
+  requestTimeoutMs = cloudScreenCheckTimeoutMs(env)
+} = {}) {
+  const time = nowIso({ now });
+  const config = cloudScreenCheckLlmConfig(env);
+  if (!config.configured) {
+    return {
+      ok: false,
+      status: 'needs-config',
+      reason: 'Focus Pet Cloud 需要在后端配置 StepFun API key 后才能进行屏幕检查',
+      missing: config.missing,
+      time
+    };
+  }
+  let payload;
+  try {
+    payload = normalizeCloudScreenCheckPayload(body, { maxImageBytes: cloudScreenCheckMaxImageBytes(env) });
+  } catch (error) {
+    return {
+      ok: false,
+      status: error.statusCode === 413 ? 'payload-too-large' : 'bad-request',
+      reason: error.message,
+      time
+    };
+  }
+  try {
+    const analysis = await callVisionModel({
+      config,
+      image: payload.image,
+      currentTask: payload.currentTask,
+      frontmost: payload.frontmost,
+      fetchImpl,
+      requestTimeoutMs
+    });
+    return {
+      ok: true,
+      source: 'focus-pet-cloud-stepfun',
+      time,
+      screenshotPolicy: {
+        detail: 'low',
+        storedToDisk: false,
+        returnedToClient: false,
+        requestTimeoutMs
+      },
+      ...analysis,
+      message: statusMessage(analysis)
+    };
+  } catch (error) {
+    if (error?.name === 'ScreenMonitorTimeoutError') {
+      return {
+        ok: false,
+        status: 'timeout',
+        reason: 'StepFun 屏幕检查请求超时，已丢弃本次结果',
+        time
+      };
+    }
+    throw error;
+  }
+}
+
 function bearerToken(reqOrUrl = {}) {
   const header = String(reqOrUrl.headers?.authorization || '').trim();
   if (/^Bearer\s+/i.test(header)) return header.replace(/^Bearer\s+/i, '').trim();
@@ -399,9 +644,19 @@ function authFromRequest(req, state = loadState()) {
   return resolveUserAuth(bearerToken(req), state, { deviceId: deviceIdFromRequest(req) });
 }
 
-async function parseJson(req) {
+async function parseJson(req, options = {}) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let totalBytes = 0;
+  const maxBytes = Number(options.maxBytes) || 0;
+  for await (const chunk of req) {
+    totalBytes += chunk.length;
+    if (maxBytes && totalBytes > maxBytes) {
+      const error = new Error('request body too large');
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
   const body = Buffer.concat(chunks).toString('utf8');
   return body ? JSON.parse(body) : {};
 }
@@ -519,6 +774,9 @@ function currentPort() {
 
 function healthState(options = {}) {
   const state = options.state || loadState(options);
+  const env = options.env || process.env;
+  const screenCheck = cloudScreenCheckLlmConfig(env);
+  const rateLimit = cloudScreenCheckRateLimitConfig(env);
   return {
     service: 'focus-pet-cloud',
     ok: true,
@@ -528,7 +786,17 @@ function healthState(options = {}) {
       enabled: true,
       clients: clients.size
     },
-    rtc: rtcIceServerSummary(options.env || process.env)
+    rtc: rtcIceServerSummary(env),
+    screenCheck: {
+      enabled: screenCheck.configured,
+      provider: screenCheck.provider,
+      endpointConfigured: Boolean(screenCheck.endpoint),
+      modelConfigured: Boolean(screenCheck.model),
+      apiKeyConfigured: Boolean(screenCheck.apiKey),
+      maxImageBytes: cloudScreenCheckMaxImageBytes(env),
+      timeoutMs: cloudScreenCheckTimeoutMs(env),
+      rateLimit
+    }
   };
 }
 
@@ -561,6 +829,50 @@ async function handleApi(req, res) {
       deviceId: result.deviceId,
       iceServers: rtcIceServers()
     });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/screen-check') {
+    const rateLimit = consumeCloudScreenCheckRateLimit(screenCheckRateLimitKey(req), { env: process.env });
+    if (!rateLimit.allowed) {
+      return jsonResponse(res, 429, {
+        ok: false,
+        status: 'rate-limited',
+        reason: '屏幕检查请求过于频繁，请稍后重试',
+        retryAfterSeconds: rateLimit.retryAfterSeconds
+      });
+    }
+    let body;
+    try {
+      body = await parseJson(req, { maxBytes: cloudScreenCheckMaxBodyBytes(process.env) });
+    } catch (error) {
+      return jsonResponse(res, error.statusCode === 413 ? 413 : 400, {
+        ok: false,
+        status: error.statusCode === 413 ? 'payload-too-large' : 'bad-request',
+        reason: error.message
+      });
+    }
+    let result;
+    try {
+      result = await handleCloudScreenCheck({
+        body,
+        env: process.env,
+        fetchImpl: fetch,
+        requestTimeoutMs: cloudScreenCheckTimeoutMs(process.env)
+      });
+    } catch {
+      return jsonResponse(res, 502, {
+        ok: false,
+        status: 'upstream-error',
+        reason: '屏幕检查服务暂时不可用'
+      });
+    }
+    const status = result.status === 'payload-too-large'
+      ? 413
+      : result.status === 'bad-request'
+        ? 400
+        : result.status === 'timeout'
+          ? 504
+          : 200;
+    return jsonResponse(res, status, result);
   }
   const state = loadState();
   const auth = authFromRequest(req, state);
@@ -686,6 +998,10 @@ module.exports = {
   normalizeCloudRealtimeEvent,
   recordCloudRealtimeAudit,
   normalizeCallAuditLog,
+  cloudScreenCheckLlmConfig,
+  handleCloudScreenCheck,
+  normalizeCloudScreenCheckPayload,
+  consumeCloudScreenCheckRateLimit,
   rtcIceServers,
   rtcIceServerSummary,
   healthState,

@@ -1850,6 +1850,47 @@ const scenarios = [
     `
   },
   {
+    name: 'avatar-petting-gesture',
+    windowSize: { width: 540, height: 520 },
+    expectedVibe: 'guarded',
+    expectPettingGesture: true,
+    setup: `
+      await (async () => {
+        const pet = document.querySelector('#pet');
+        expanded = true;
+        pet.classList.remove('compact');
+        pet.classList.add('expanded');
+        pet.classList.remove('action-feed', 'action-clean', 'action-study', 'action-work', 'action-play', 'action-rest', 'is-petting');
+        if (petActionTimer) {
+          clearTimeout(petActionTimer);
+          petActionTimer = null;
+        }
+        petAnimationLocked = false;
+        document.querySelector('#homeActions').classList.remove('hidden');
+        localStorage.setItem('focusPetVitals:v1', JSON.stringify({ mood: 56, energy: 52, bond: 22, reason: 'qa avatar petting gesture' }));
+        loadStoredPetVitals();
+        lastTouchVitalAt = 0;
+        updatePetStats();
+        window.__qaFocusPetCalls.clear();
+        await startAvatarDrag({
+          button: 0,
+          pointerId: 41,
+          pointerType: 'mouse',
+          screenX: 92,
+          screenY: 128,
+          clientX: 92,
+          clientY: 128,
+          preventDefault() {}
+        });
+        moveAvatarDrag({ pointerId: 41, pointerType: 'mouse', screenX: 110, screenY: 126, clientX: 110, clientY: 126 });
+        moveAvatarDrag({ pointerId: 41, pointerType: 'mouse', screenX: 88, screenY: 130, clientX: 88, clientY: 130 });
+        moveAvatarDrag({ pointerId: 41, pointerType: 'mouse', screenX: 112, screenY: 127, clientX: 112, clientY: 127 });
+        moveAvatarDrag({ pointerId: 41, pointerType: 'mouse', screenX: 90, screenY: 129, clientX: 90, clientY: 129 });
+        endAvatarDrag({ type: 'pointerup', pointerId: 41 });
+      })();
+    `
+  },
+  {
     name: 'touch-fragile-feedback',
     windowSize: { width: 540, height: 520 },
     expectedVibe: 'fragile',
@@ -5164,7 +5205,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.onboarding.text.includes('3 分钟完成基础模式')
     && domState.onboarding.text.includes('任务 + 宠物 + 前台 App 判断')
     && domState.onboarding.text.includes('工作/学习/娱乐关键词')
-    && domState.onboarding.text.includes('屏幕 LLM')
+    && domState.onboarding.text.includes('屏幕检查')
     && domState.onboarding.text.includes('社交监督')
     && domState.onboarding.text.includes('WebRTC')
     && domState.onboarding.text.includes('会采集什么')
@@ -5245,6 +5286,21 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.focus === 'bond'
     && domState.careFeedback.focusSource === 'touch'
     && domState.vitalFocusAction.button === '继续互动'
+  );
+  const pettingGestureOk = !scenario.expectPettingGesture || (
+    domState.surface === 'home'
+    && domState.petClasses.includes('expanded')
+    && domState.petClasses.includes('is-petting')
+    && domState.petClasses.includes('action-clean')
+    && domState.avatarA11y.aria.includes('轻抚')
+    && domState.message === '它犹豫了一下，还是靠近了一点。'
+    && domState.careFeedback.reason.includes('关系还在试探')
+    && domState.careFeedback.delta === '心+1 亲+3'
+    && domState.careFeedback.focus === 'bond'
+    && domState.careFeedback.focusSource === 'touch'
+    && !domState.focusPetCalls.some(call => call.name === 'setWindowPosition')
+    && domState.focusPetCalls.some(call => call.name === 'setClickThrough' && call.args[0] === false)
+    && domState.focusPetCalls.some(call => call.name === 'setClickThrough' && call.args[0] === true)
   );
   const touchFragileFeedbackOk = !scenario.expectTouchFragileFeedback || (
     domState.surface === 'home'
@@ -6153,6 +6209,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     taskSurfaceRepeatOk,
     touchFeedbackOk,
     avatarKeyboardTouchOk,
+    pettingGestureOk,
     touchFragileFeedbackOk,
     touchRepeatFeedbackOk,
     taskClearOk,

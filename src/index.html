@@ -87,12 +87,12 @@
         <section class="onboarding-card" data-onboarding-mode="advanced" data-onboarding-default="off">
           <header>
             <strong>高级模式</strong>
-            <span>屏幕 LLM + 社交监督 + WebRTC</span>
+            <span>屏幕检查 + 社交监督 + WebRTC</span>
           </header>
           <dl class="onboarding-facts">
             <div><dt>会采集什么</dt><dd>你主动开启后，可能包含屏幕缩略图、外部会话消息和通话信令。</dd></div>
-            <div><dt>不会采集什么</dt><dd>不会默认开启屏幕监控，不会默认发起社交监督或 WebRTC 通话。</dd></div>
-            <div><dt>数据保存在哪里</dt><dd>聊天、媒体记录和监控摘要保存在本机或你配置的持久化目录。</dd></div>
+            <div><dt>不会采集什么</dt><dd>不会默认开启屏幕检查，不会默认发起社交监督或 WebRTC 通话。</dd></div>
+            <div><dt>数据保存在哪里</dt><dd>聊天、媒体记录和检查摘要保存在本机或你配置的持久化目录。</dd></div>
             <div><dt>是否会外发</dt><dd>仅在你启用 LLM 请求或打开外部聊天连接后外发。</dd></div>
           </dl>
           <button id="openAdvancedOnboarding" type="button">查看高级设置</button>
@@ -132,24 +132,33 @@
         </section>
 
         <section id="settingsGroupAi" class="settings-group" data-settings-group="ai" data-setting-risk="ai" aria-labelledby="settingsTabAi" hidden>
-          <div class="settings-risk-note">屏幕监控和 LLM 请求集中在这里。本地模型可用 Ollama 或本机 OpenAI-compatible 服务。</div>
+          <div class="settings-risk-note">屏幕检查和 LLM 请求集中在这里。默认使用 StepFun 视觉检查，也可切换 Ollama 或本机 OpenAI-compatible 服务。</div>
           <label class="setting-line"><span>云端请求</span>
             <select id="settingLlmCloudMode">
               <option value="allowed">允许云端</option>
               <option value="local-only">仅本地</option>
             </select>
           </label>
-          <label class="setting-line"><span>屏幕监控</span><input id="settingScreenMonitorEnabled" type="checkbox" /></label>
-          <label class="setting-line"><span>监控间隔 秒</span><input id="settingScreenMonitorInterval" type="number" min="15" max="300" /></label>
+          <label class="setting-line"><span>屏幕检查</span><input id="settingScreenMonitorEnabled" type="checkbox" /></label>
+          <label class="setting-line"><span>检查间隔 秒</span><input id="settingScreenMonitorInterval" type="number" min="15" max="300" /></label>
+          <label class="setting-line"><span>检查通道</span>
+            <select id="settingScreenCheckTransport">
+              <option value="auto">自动</option>
+              <option value="cloud">Cloud</option>
+              <option value="direct">本机直连</option>
+            </select>
+          </label>
+          <label class="setting-block"><span>Cloud 检查 URL</span><input id="settingScreenCheckCloudUrl" type="url" placeholder="https://cloud.example.com/api/screen-check" /></label>
           <label class="setting-line"><span>屏幕模型提供方</span>
             <select id="settingScreenMonitorProvider">
+              <option value="stepfun">StepFun 视觉检查</option>
               <option value="ollama">Ollama 本地</option>
               <option value="local-openai-compatible">本地 OpenAI-compatible</option>
               <option value="openai-compatible">云端 OpenAI-compatible</option>
             </select>
           </label>
-          <label class="setting-block"><span>LLM Endpoint</span><input id="settingScreenMonitorEndpoint" type="url" placeholder="http://127.0.0.1:11434/v1/chat/completions" /></label>
-          <label class="setting-block"><span>LLM Model</span><input id="settingScreenMonitorModel" type="text" placeholder="vision-model" maxlength="120" /></label>
+          <label class="setting-block"><span>LLM Endpoint</span><input id="settingScreenMonitorEndpoint" type="url" placeholder="https://api.stepfun.com/v1" /></label>
+          <label class="setting-block"><span>LLM Model</span><input id="settingScreenMonitorModel" type="text" placeholder="step-3.7-flash" maxlength="120" /></label>
           <label class="setting-line"><span>复盘 LLM</span><input id="settingReviewLlmEnabled" type="checkbox" /></label>
           <label class="setting-line"><span>复盘模型提供方</span>
             <select id="settingReviewLlmProvider">
@@ -163,7 +172,7 @@
           <div id="llmSelfCheckResult" class="llm-self-check-result" role="status" aria-live="polite"></div>
           <div class="settings-actions">
             <button id="testLlmConnectivity" type="button">LLM 自检</button>
-            <button id="testScreenMonitor" type="button">测试监控</button>
+            <button id="testScreenMonitor" type="button">测试检查</button>
             <button id="openScreenRecording" type="button">屏幕权限</button>
           </div>
         </section>
@@ -224,6 +233,7 @@
 
     <section class="avatar" aria-label="Nervy 桌面宠物，按 Enter 摸摸它" role="button" tabindex="0" title="按 Enter 或空格摸摸宠物">
       <div class="pet-sprite" aria-hidden="true"></div>
+      <div class="petting-strokes" aria-hidden="true"><i></i><i></i><i></i></div>
       <div class="status-dot" id="statusDot"></div>
     </section>
 

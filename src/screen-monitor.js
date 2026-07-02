@@ -6,10 +6,15 @@ const DEFAULT_THUMBNAIL_SIZE = { width: 960, height: 540 };
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const SCREEN_ANALYSIS_SCHEMA_VERSION = 1;
 const MIN_CONFIDENCE_TO_SUGGEST_INTERVENTION = 0.75;
+const SCREEN_CHECK_TRANSPORTS = new Set(['auto', 'cloud', 'direct']);
 const {
   authHeaders,
+  DEFAULT_STEPFUN_ENDPOINT,
+  DEFAULT_STEPFUN_SCREEN_MODEL,
   endpointAllowedByCloudMode,
   normalizeChatEndpoint,
+  normalizeScreenCheckCloudUrl,
+  normalizeLlmProvider,
   providerSummary
 } = require('./llm-provider');
 
@@ -40,18 +45,41 @@ function normalizeEndpoint(value) {
   return /^https?:\/\//i.test(endpoint) ? endpoint : '';
 }
 
+function normalizeScreenCheckTransport(value) {
+  const transport = String(value || '').trim();
+  return SCREEN_CHECK_TRANSPORTS.has(transport) ? transport : 'auto';
+}
+
 function monitorConfig(settings = {}, env = process.env) {
   const cloudMode = settings.llmCloudMode || env.FOCUS_PET_LLM_CLOUD_MODE || 'allowed';
-  const provider = settings.screenMonitorProvider || env.FOCUS_PET_LLM_PROVIDER || 'openai-compatible';
+  const provider = normalizeLlmProvider(
+    settings.screenMonitorProvider
+    || env.FOCUS_PET_SCREEN_LLM_PROVIDER
+    || env.FOCUS_PET_LLM_PROVIDER
+    || 'stepfun'
+  );
   const endpoint = normalizeChatEndpoint(
     settings.screenMonitorEndpoint
+    || env.FOCUS_PET_SCREEN_LLM_ENDPOINT
     || env.FOCUS_PET_LLM_ENDPOINT
     || env.OPENAI_CHAT_COMPLETIONS_URL
-    || '',
+    || (provider === 'stepfun' ? DEFAULT_STEPFUN_ENDPOINT : ''),
     { provider }
   );
-  const model = cleanText(settings.screenMonitorModel || env.FOCUS_PET_LLM_MODEL || '', 120);
-  const apiKey = String(env.FOCUS_PET_LLM_API_KEY || env.OPENAI_API_KEY || '').trim();
+  const model = cleanText(
+    settings.screenMonitorModel
+    || env.FOCUS_PET_SCREEN_LLM_MODEL
+    || env.FOCUS_PET_LLM_MODEL
+    || (provider === 'stepfun' ? DEFAULT_STEPFUN_SCREEN_MODEL : ''),
+    120
+  );
+  const apiKey = String(
+    env.FOCUS_PET_SCREEN_LLM_API_KEY
+    || env.FOCUS_PET_LLM_API_KEY
+    || (provider === 'stepfun' ? (env.FOCUS_PET_STEPFUN_API_KEY || env.STEPFUN_API_KEY || env.STEP_API_KEY) : '')
+    || env.OPENAI_API_KEY
+    || ''
+  ).trim();
   const summary = providerSummary({ provider, endpoint, cloudMode });
   const missing = [];
   if (!endpoint) missing.push('endpoint');
@@ -65,6 +93,50 @@ function monitorConfig(settings = {}, env = process.env) {
     apiKey,
     configured: missing.length === 0,
     missing
+  };
+}
+
+function screenCheckCloudConfig(settings = {}, env = process.env) {
+  const cloudMode = settings.llmCloudMode || env.FOCUS_PET_LLM_CLOUD_MODE || 'allowed';
+  const endpoint = normalizeScreenCheckCloudUrl(
+    settings.screenCheckCloudUrl
+    || env.FOCUS_PET_SCREEN_CHECK_CLOUD_URL
+    || env.FOCUS_PET_CLOUD_SCREEN_CHECK_URL
+    || env.FOCUS_PET_SCREEN_CHECK_URL
+    || env.FOCUS_PET_CLOUD_PUBLIC_URL
+    || ''
+  );
+  const missing = [];
+  if (!endpoint) missing.push('endpoint');
+  if (endpoint && !endpointAllowedByCloudMode(endpoint, cloudMode)) missing.push('localEndpoint');
+  return {
+    provider: 'focus-pet-cloud',
+    cloudMode,
+    localProvider: false,
+    apiKeyRequired: false,
+    endpoint,
+    configured: missing.length === 0,
+    missing
+  };
+}
+
+function chooseScreenCheckTransport({ settings = {}, directConfig = {}, cloudConfig = {} } = {}) {
+  const requested = normalizeScreenCheckTransport(settings.screenCheckTransport);
+  if (requested === 'direct') {
+    return directConfig.configured
+      ? { transport: 'direct', config: directConfig }
+      : { transport: 'none', missing: directConfig.missing || [] };
+  }
+  if (requested === 'cloud') {
+    return cloudConfig.configured
+      ? { transport: 'cloud', config: cloudConfig }
+      : { transport: 'none', missing: cloudConfig.missing || [] };
+  }
+  if (directConfig.configured) return { transport: 'direct', config: directConfig };
+  if (cloudConfig.configured) return { transport: 'cloud', config: cloudConfig };
+  return {
+    transport: 'none',
+    missing: [...new Set([...(directConfig.missing || []), ...(cloudConfig.missing || [])])]
   };
 }
 
@@ -266,6 +338,7 @@ async function callVisionModel({ config, image, currentTask, frontmost, fetchImp
   const body = {
     model: config.model,
     temperature: 0.2,
+    reasoning_effort: 'low',
     max_tokens: 220,
     response_format: { type: 'json_object' },
     messages: [
@@ -297,6 +370,62 @@ async function callVisionModel({ config, image, currentTask, frontmost, fetchImp
   }
   const payload = await response.json();
   return normalizeScreenAnalysis(payload?.choices?.[0]?.message?.content || payload);
+}
+
+function cloudScreenCheckDeviceId(settings = {}, env = process.env) {
+  return cleanText(
+    settings.screenCheckDeviceId
+    || env.FOCUS_PET_SCREEN_CHECK_DEVICE_ID
+    || env.FOCUS_PET_DEVICE_ID
+    || '',
+    120
+  );
+}
+
+async function callCloudScreenCheck({
+  config,
+  image,
+  currentTask,
+  frontmost,
+  settings = {},
+  env = process.env,
+  fetchImpl = fetch,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS
+}) {
+  if (typeof fetchImpl !== 'function') throw new Error('缺少 fetch 实现');
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const deviceId = cloudScreenCheckDeviceId(settings, env);
+  const headers = { 'content-type': 'application/json' };
+  if (deviceId) headers['x-focus-pet-device-id'] = deviceId;
+  const body = {
+    image: {
+      dataUrl: image.dataUrl,
+      sourceName: image.sourceName || '',
+      size: image.size || null
+    },
+    currentTask: currentTask ? { text: cleanText(currentTask.text, 160) } : null,
+    frontmost: {
+      app: cleanText(frontmost?.app, 80),
+      title: cleanText(frontmost?.title, 140)
+    }
+  };
+  const response = await fetchWithTimeout(fetchImpl(config.endpoint, {
+    method: 'POST',
+    headers,
+    signal: controller?.signal,
+    body: JSON.stringify(body)
+  }), requestTimeoutMs, () => controller?.abort());
+  if (!response.ok) {
+    const detail = typeof response.text === 'function' ? await response.text().catch(() => '') : '';
+    throw new Error(`Cloud 屏幕检查请求失败：${response.status}${detail ? ` ${detail.slice(0, 160)}` : ''}`);
+  }
+  const payload = await response.json();
+  if (payload && typeof payload === 'object' && Object.prototype.hasOwnProperty.call(payload, 'ok')) return payload;
+  return {
+    ok: true,
+    source: 'focus-pet-cloud',
+    ...normalizeScreenAnalysis(payload?.choices?.[0]?.message?.content || payload)
+  };
 }
 
 async function capturePrimaryScreen(desktopCapturer, options = {}) {
@@ -335,18 +464,20 @@ async function analyzeScreenActivity({
     return {
       ok: false,
       status: 'disabled',
-      reason: '屏幕监控未开启',
+      reason: '屏幕检查未开启',
       time: now().toISOString()
     };
   }
 
-  const config = monitorConfig(settings, env);
-  if (!config.configured) {
+  const directConfig = monitorConfig(settings, env);
+  const cloudConfig = screenCheckCloudConfig(settings, env);
+  const selectedTransport = chooseScreenCheckTransport({ settings, directConfig, cloudConfig });
+  if (selectedTransport.transport === 'none') {
     return {
       ok: false,
       status: 'needs-config',
-      reason: '需要配置 LLM endpoint、model 和 API key',
-      missing: config.missing,
+      reason: '需要配置 Cloud 检查 URL，或本机 LLM endpoint、model 和 API key',
+      missing: selectedTransport.missing || [],
       time: now().toISOString()
     };
   }
@@ -366,14 +497,25 @@ async function analyzeScreenActivity({
   const image = await captureScreen();
   let analysis;
   try {
-    analysis = await callVisionModel({
-      config,
-      image,
-      currentTask,
-      frontmost,
-      fetchImpl,
-      requestTimeoutMs
-    });
+    analysis = selectedTransport.transport === 'cloud'
+      ? await callCloudScreenCheck({
+        config: selectedTransport.config,
+        image,
+        currentTask,
+        frontmost,
+        settings,
+        env,
+        fetchImpl,
+        requestTimeoutMs
+      })
+      : await callVisionModel({
+        config: selectedTransport.config,
+        image,
+        currentTask,
+        frontmost,
+        fetchImpl,
+        requestTimeoutMs
+      });
   } catch (error) {
     if (error?.name === 'ScreenMonitorTimeoutError') {
       return {
@@ -387,7 +529,16 @@ async function analyzeScreenActivity({
     }
     throw error;
   }
-  return {
+  if (analysis?.ok === false) {
+    return {
+      ...analysis,
+      time,
+      manual: Boolean(manual),
+      sourceName: image.sourceName || ''
+    };
+  }
+  const result = {
+    ...analysis,
     ok: true,
     time,
     manual: Boolean(manual),
@@ -398,18 +549,23 @@ async function analyzeScreenActivity({
       detail: 'low',
       storedToDisk: false,
       requestTimeoutMs
-    },
-    ...analysis,
-    message: statusMessage(analysis)
+    }
+  };
+  if (!result.message) result.message = statusMessage(result);
+  return {
+    ...result
   };
 }
 
 module.exports = {
   analyzeScreenActivity,
   buildVisionPrompt,
+  callCloudScreenCheck,
   callVisionModel,
   capturePrimaryScreen,
   monitorConfig,
   normalizeScreenAnalysis,
+  screenCheckCloudConfig,
+  statusMessage,
   ScreenMonitorTimeoutError
 };

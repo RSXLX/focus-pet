@@ -181,14 +181,14 @@
 - 为聊天状态补 `version`。
 - 为关键 JSON 写入封装原子写。
 - 加载失败时保留损坏文件副本并恢复默认状态。
-- 活动日志、屏幕监控日志和运行日志默认保留 30 天，并允许用户在高级设置中调整 1-365 天。
+- 活动日志、屏幕检查日志和运行日志默认保留 30 天，并允许用户在高级设置中调整 1-365 天。
 
 验收标准：
 
 - JSON 写入不会留下半文件。
 - 读取损坏状态时应用仍可启动。
 - 用户数据不会被静默覆盖。
-- 活动日志、屏幕监控日志和运行日志不会无限增长，旧记录会按保留周期裁剪。
+- 活动日志、屏幕检查日志和运行日志不会无限增长，旧记录会按保留周期裁剪。
 
 当前执行进展（2026-06-30）：
 
@@ -206,7 +206,7 @@
 - `migrateChatState()` 会跳过 `callAuditLog` 中 `null`、字符串、未知事件、缺少 `from/to/callId` 的异常审计项，并只保留通话生命周期审计字段，不保留 SDP 或 ICE candidate。
 - 已新增 `docs/storage-recovery.md` 记录当前存储恢复机制和后续迁移入口。
 - 已新增 `src/jsonl-retention.js`，为本地 JSONL 日志和分级运行日志提供按保留周期原子裁剪的通用写入 helper。
-- 已为 `activity.jsonl`、`screen-monitor.jsonl` 和 `focus-pet.log` 增加本地保留周期：默认 30 天，高级设置可配置 1-365 天；每次追加活动样本、屏幕监控样本或运行日志条目后会按保留窗口原子重写日志，时间不可解析的历史 JSONL 行会保留，避免因旧数据格式不完整而静默丢弃。
+- 已为 `activity.jsonl`、`screen-monitor.jsonl` 和 `focus-pet.log` 增加本地保留周期：默认 30 天，高级设置可配置 1-365 天；每次追加活动样本、屏幕检查样本或运行日志条目后会按保留窗口原子重写日志，时间不可解析的历史 JSONL 行会保留，避免因旧数据格式不完整而静默丢弃。
 - `focus-pet.log` 通过 `writeRuntimeLog()` 接入保留周期，主进程和启动监督脚本都会传入当前 `activityRetentionDays`；旧的 `[time] message` 文本行会被解析为兼容日志，保留窗口内的旧格式行不会被丢弃。
 
 当前 3.3 验收状态：
@@ -215,7 +215,7 @@
 - 读取损坏状态时应用仍可启动：已完成。
 - 用户数据不会被静默覆盖：已完成。
 - schema version、显式迁移入口和自动备份：已完成。
-- 活动日志、屏幕监控日志和运行日志默认 30 天保留且可配置 1-365 天：已完成。
+- 活动日志、屏幕检查日志和运行日志默认 30 天保留且可配置 1-365 天：已完成。
 
 ### 3.4 可观测性和诊断
 
@@ -258,7 +258,7 @@
 - 摘要新增 `activity`，从 `activity.jsonl` 输出样本总数、状态计数和最近最多 5 条状态判断摘要。
 - `activity.recentDecisions` 只输出状态、时间、原因分类、固定说明、置信度和是否存在 App/标题/任务关联，不输出前台 App 名称、窗口标题原文、当前任务文本或原始 reason。
 - 摘要不输出任务全文、聊天正文、截图 data URL、API key、session token、邀请码或 LLM endpoint/model 原文。
-- 摘要中的屏幕监控和复盘 LLM 配置会区分 `apiKeyRequired` 和 `apiKeyConfigured`，避免 Ollama、本机 OpenAI-compatible 或 `local-only` 模式被误读为缺少 API key。
+- 摘要中的屏幕检查和复盘 LLM 配置会区分 `apiKeyRequired` 和 `apiKeyConfigured`，避免 Ollama、本机 OpenAI-compatible 或 `local-only` 模式被误读为缺少 API key。
 - 运行日志写入、摘要读取和 `appendErrorThing()` 错误日志写入都会复用 `sanitizeLogText()`，替换 Bearer token、长 token、env secret 赋值、URL、图片 data URL、当前任务/前台上下文键值（如 `currentTask`、`frontmost`、`screenEndpoint`、`reviewEndpoint`、`endpoint`）和本地绝对路径；诊断包不会包含原始运行日志。
 - 诊断包输出目录默认只保留最新 20 个标准命名诊断包，避免发布前预检和排障重复执行后产物无限累积。
 - 摘要新增 `chat.websocket`，只输出 WebSocket 是否启用/活跃、客户端数量、Origin 策略、额外允许 Origin 数量、是否允许无 Origin/`file://` 和 CORS 是否通配，不输出具体 Origin、WebSocket URL、token 或 peer id。
@@ -375,7 +375,7 @@
 
 - 基础：开机启动、提醒频率、宠物强度。
 - 专注判断：工作/学习/娱乐规则、App 列表。
-- AI：屏幕监控、截图间隔、LLM、连通性测试。
+- AI：屏幕检查、截图间隔、LLM、连通性测试。
 - 社交：邀请码、共享范围、文件大小、通话配置。
 - 高级：更新源、日志、诊断包、存储路径、实验功能。
 
@@ -389,7 +389,7 @@
 - 设置面板已拆为基础、判断、AI、社交和高级五个分组，首次打开默认停留在基础分组。
 - 基础分组保留自动弹提醒、开机启动、提醒冷却、空闲提醒和宠物强度。
 - 判断分组集中工作/学习/游戏/分心关键词，以及工作 App、游戏 App 列表。
-- AI 分组集中屏幕监控、监控间隔、LLM endpoint/model、复盘 LLM、LLM 自检、测试监控和屏幕权限入口，并标记为高风险能力组。
+- AI 分组集中屏幕检查、检查间隔、LLM endpoint/model、复盘 LLM、LLM 自检、测试检查和屏幕权限入口，并标记为高风险能力组。
 - 社交分组集中媒体上限、语音快捷键，并提示邀请码、外部会话和通话配置由聊天面板管理。
 - 高级分组集中更新源、自动检查更新、数据目录、诊断摘要和权限引导，并标记为高风险能力组。
 - 已补充测试，覆盖分组 DOM、默认激活分组、高风险分组标记、分组切换逻辑、数据目录入口、诊断摘要入口和样式约束。
@@ -426,7 +426,7 @@
 - 已新增 toolbar 的“引导”入口，打开后进入独立新手引导面板。
 - 新手引导包含基础、增强、高级三张模式卡片。
 - 每个模式都说明“会采集什么”“不会采集什么”“数据保存在哪里”“是否会外发”。
-- 基础模式聚焦任务、宠物和前台 App 判断，提供一键完成按钮；完成时会关闭屏幕监控、复盘 LLM 和自动更新，并把完成状态写入本地 `localStorage`。
+- 基础模式聚焦任务、宠物和前台 App 判断，提供一键完成按钮；完成时会关闭屏幕检查、复盘 LLM 和自动更新，并把完成状态写入本地 `localStorage`。
 - 增强模式只跳转到“判断”设置分组，引导用户配置工作/学习/娱乐关键词和复盘相关判断，不自动开启高级能力。
 - 高级模式标记为默认关闭，只跳转到 AI 设置分组查看屏幕 LLM、社交监督和 WebRTC 相关入口，不主动启用。
 - 已补充测试，覆盖三层模式文案、四项说明、基础模式完成动作、高级默认关闭和默认设置中的高级开关状态。
@@ -470,14 +470,14 @@
 
 当前执行进展（2026-06-30）：
 
-- 屏幕监控 prompt 已改为要求视觉 LLM 只输出结构化 JSON，字段包含 `state`、`activity_summary`、`task_relevance`、`evidence`、`confidence`、`privacy_risk`、`suggested_intervention`、`reasoning_visible`。
+- 屏幕检查 prompt 已改为要求视觉 LLM 只输出结构化 JSON，字段包含 `state`、`activity_summary`、`task_relevance`、`evidence`、`confidence`、`privacy_risk`、`suggested_intervention`、`reasoning_visible`。
 - `normalizeScreenAnalysis()` 已支持新 schema，同时保留旧 `status/activity/reason/suggestion` 输出兼容。
 - 新 schema 校验失败时会降级为 `unknown`，`suggestedIntervention` 固定为 `none`，用户可见解释为“LLM 输出不符合结构化 schema”。
 - 当 `confidence < 0.75` 时会标记 `lowConfidence: true`，并把 `suggestedIntervention` 降为 `none`，只展示状态，不主动触发强提醒。
-- 屏幕监控成功结果中的 `distracted` 用户可见消息已统一为“可能偏离当前任务”，避免重新出现“跑偏”等强提醒措辞。
+- 屏幕检查成功结果中的 `distracted` 用户可见消息已统一为“可能偏离当前任务”，避免重新出现“跑偏”等强提醒措辞。
 - LLM 请求增加超时策略；超时返回 `status: timeout`，并丢弃本次截图结果，不把截图 data URL 带入返回值。
 - 成功结果会记录截图策略摘要：缩略图尺寸、低细节请求、不写入磁盘、请求超时时间。
-- 主进程屏幕监控日志只记录状态、活动摘要、结构化字段、截图策略和共享媒体 id，不写入截图 data URL。
+- 主进程屏幕检查日志只记录状态、活动摘要、结构化字段、截图策略和共享媒体 id，不写入截图 data URL。
 - 已补充测试，覆盖结构化 schema、无效 schema 降级、低置信度降级、低打扰最终消息、prompt 字段、请求超时丢弃。
 
 当前 4.5 验收状态：
@@ -545,14 +545,14 @@
 - Ollama endpoint 可从 `http://127.0.0.1:11434` 自动归一化到 `/v1/chat/completions`。
 - Ollama 和本机 provider 不要求 API key，请求不会发送空的 `Authorization` 头。
 - `local-only` 模式会拒绝非本机回环地址的 LLM endpoint。
-- 屏幕监控、复盘 LLM、LLM 连通性自检和诊断摘要均已接入 provider 信息。
+- 屏幕检查、复盘 LLM、LLM 连通性自检和诊断摘要均已接入 provider 信息。
 - 诊断摘要只输出 provider、本地/云端状态、API key 是否必需和配置是否存在，不输出 endpoint/model 原文。
 
 当前 5.2 验收状态：
 
 - Ollama：已完成基础 OpenAI-compatible 接入。
 - 本地文本分类模型：由现有本地规则判断承载，LLM 侧已补本机 OpenAI-compatible provider。
-- 本地视觉模型：已完成屏幕监控本机 provider 接入。
+- 本地视觉模型：已完成屏幕检查本机 provider 接入。
 - 无云端模式：已完成 `local-only` 配置拦截。
 - 本地优先作为隐私卖点：已在 AI 设置、系统文档和诊断摘要中体现。
 
@@ -687,7 +687,7 @@
 - 已继续执行 P0 3.4 的一部分：`cleanDiagnosticText()` 和 `sanitizeLogText()` 已补齐 `apiKey`、`authToken`、`sessionToken`、`inviteCode` 等 camelCase/snake_case/kebab-case secret key 赋值清洗，避免非 env 命名的本地密钥、owner token、peer session token 或邀请码进入诊断文本与运行日志摘要。
 - 已继续执行 P0 3.4 的一部分：`sanitizeLogText()` 已覆盖 `/Users`、`/private`、`/tmp`、`/var/folders` 和 Windows drive-letter 本地绝对路径，运行日志与 `appendErrorThing()` 只保留 `[local-path]` 标签，避免错误日志或运行日志回显本机目录结构。
 - 已继续执行 P0 3.4 的一部分：诊断摘要 `recentErrors` 新增 `closedByLater` 和 `open` 标记，被后续同问题已解决记录关闭的历史“未解决”项不会再被误读为仍开放；闭环判定优先使用内部完整“问题描述 + 发生位置”key，描述模糊匹配只允许在发生位置兼容时作为兜底，避免相同摘要但不同文件/位置的问题被误闭环，且内部 key 不输出。
-- 已继续执行 P0 3.4 的一部分：诊断摘要的屏幕监控和复盘 LLM 配置新增 `apiKeyRequired`，和 `apiKeyConfigured` 分开输出；本地模型、Ollama 和 `local-only` 模式会明确标记 API key 非必需，同时仍不输出 endpoint、model 或 key 原文。
+- 已继续执行 P0 3.4 的一部分：诊断摘要的屏幕检查和复盘 LLM 配置新增 `apiKeyRequired`，和 `apiKeyConfigured` 分开输出；本地模型、Ollama 和 `local-only` 模式会明确标记 API key 非必需，同时仍不输出 endpoint、model 或 key 原文。
 - 已继续执行阶段 4 的一部分：任务模型增强、当前任务选择解释、手动设为当前任务入口、任务相关 App/关键词参与状态判断、任务维度复盘、行动建议生成和任务模型文档。
 - 已继续执行阶段 5 的一部分：设置面板分层、AI/社交/高级高风险能力归组、设置内数据目录和诊断摘要入口、新手引导三层模式和基础模式一键完成。
 - 已继续执行阶段 5 的一部分：新增 `npm run release:preflight`，默认打印发布前检查清单，`--run fast` 执行 `npm test`、`npm run check`、`node scripts/release-preflight.js --check diagnostics-summary-output`、`npm run diagnostics:bundle -- --output-dir output/diagnostics/preflight`、`node scripts/release-preflight.js --check diagnostics-bundle-output`、`node scripts/release-preflight.js --check package-scripts`、`node scripts/release-preflight.js --check docs-boundary`、`node scripts/release-preflight.js --check optimization-plan` 和 `node scripts/release-preflight.js --check error-log`；CLI 也兼容 `--run=fast` 与 `--check=error-log` 等号写法，避免常见参数形式被误解析为空。
@@ -727,7 +727,7 @@
 - 已继续执行体验优化的一部分：`pet:generate-animations` 改为通过 `scripts/run-pet-animation-generator.js` 启动，优先使用带 Pillow 的 Python，系统 `python3` 缺 Pillow 时会自动回退到 Codex bundled Python，避免资源生成命令在当前环境不可执行。
 - 已继续执行体验优化的一部分：宠物分享素材已重构为短发黑发、米白针织毛衣、浅色洞洞鞋小人形象的全身图片包，`src/assets/pets/nervy-sci-fi-kid/images/source` 保存 24 张由参考图特征生成得到的源 PNG，`images/frames` 保存 190 张由这些新图生成的动作帧；聊天动图托盘和主进程分享清单已扩展到 21 个独立 GIF 和一个全身状态合集 GIF；`animation-manifest.json` 对 spritesheet、imagePack 和 interactionGifs 统一标记 `identity: elys-short-haired-sweater-girl`、`fullBody: true`、`sourceType: generated-image-pack` 和 `usesBaseSpritesheet: false`，并将标准 QA 接触表刷新到 `output/hatch-pet/nervy/qa/contact-sheet.png`，避免继续把旧 spritesheet 裁帧当作新增图片，也避免再混入旧小人、星核机器人或动物形象。
 - 已继续执行架构优化的一部分：桌面主进程的 `chat-service` 从顶层常驻依赖改为 `getChatService()` 懒加载，并通过 `ensureChatServiceStarted()` 在聊天、宠物动图分享和屏幕活动摘要同步时按需启动；渲染端取消启动即连接聊天 WebSocket，改为打开聊天或发送消息时连接；宠物 GIF 托盘关闭、切换面板或折叠桌宠时会释放预览图片节点；Electron 窗口启用后台节流并关闭拼写检查，降低基础运行内存占用。
-- 已继续执行架构优化的一部分：主进程的 diagnostics、screen-monitor 和 llm-self-check 从顶层依赖改为 getter 懒加载，只有诊断、屏幕监控采样或 LLM 自检触发时才加载；`settings:update` 只在聊天服务已加载时同步社交运行态设置，避免保存设置拉起社交模块；diagnostics 内部的 chat-service 依赖也改为按需获取，避免诊断模块导入阶段间接加载社交服务。
+- 已继续执行架构优化的一部分：主进程的 diagnostics、screen-monitor 和 llm-self-check 从顶层依赖改为 getter 懒加载，只有诊断、屏幕检查采样或 LLM 自检触发时才加载；`settings:update` 只在聊天服务已加载时同步社交运行态设置，避免保存设置拉起社交模块；diagnostics 内部的 chat-service 依赖也改为按需获取，避免诊断模块导入阶段间接加载社交服务。
 
 不触碰：
 

@@ -122,7 +122,7 @@ app:get-diagnostics
 - 媒体大小上限。
 - LLM 云端请求模式。
 - 规则数量。
-- 屏幕监控是否开启、provider、是否本地 provider、endpoint/model 是否已配置、API key 是否必需以及是否已配置。
+- 屏幕检查是否开启、provider、是否本地 provider、endpoint/model 是否已配置、API key 是否必需以及是否已配置。
 - 复盘 LLM 是否开启、provider、是否本地 provider、endpoint/model 是否已配置、API key 是否必需以及是否已配置。
 - 更新源是否配置。
 
@@ -148,7 +148,7 @@ app:get-diagnostics
 - `statusCounts`：各状态数量。
 - `recentDecisions`：最近最多 5 条状态判断摘要。
 
-本地日志默认保留 30 天，可在高级设置中配置 1-365 天；诊断摘要只输出保留天数和安全统计，不输出原始活动日志、屏幕监控日志内容或运行日志全文。
+本地日志默认保留 30 天，可在高级设置中配置 1-365 天；诊断摘要只输出保留天数和安全统计，不输出原始活动日志、屏幕检查日志内容或运行日志全文。
 
 `recentDecisions` 只包含：
 

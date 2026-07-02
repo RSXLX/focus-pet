@@ -36,7 +36,13 @@ const cloudService = require('../src/cloud-service');
 const { normalizeMessage, reconcileQueuedMessages } = chatService;
 const { applyLaunchAtLogin, launchAtLoginState } = require('../src/launch-login');
 const { reviewLlmConfig, summarizeDailyReview } = require('../src/review-llm');
-const { isLocalEndpoint, normalizeChatEndpoint } = require('../src/llm-provider');
+const {
+  DEFAULT_STEPFUN_CHAT_ENDPOINT,
+  DEFAULT_STEPFUN_ENDPOINT,
+  DEFAULT_STEPFUN_SCREEN_MODEL,
+  isLocalEndpoint,
+  normalizeChatEndpoint
+} = require('../src/llm-provider');
 const { parseFocusPetProcesses } = require('../scripts/process-utils');
 const { shouldRestartAfterExit } = require('../scripts/run-electron');
 const {
@@ -930,6 +936,9 @@ test('settings store normalizes configurable behavior', () => {
 
   assert.equal(defaultSettings.autoCheckUpdates, true);
   assert.equal(defaultSettings.updateFeedUrl, DEFAULT_UPDATE_FEED_URL);
+  assert.equal(defaultSettings.screenMonitorProvider, 'stepfun');
+  assert.equal(defaultSettings.screenMonitorEndpoint, DEFAULT_STEPFUN_ENDPOINT);
+  assert.equal(defaultSettings.screenMonitorModel, DEFAULT_STEPFUN_SCREEN_MODEL);
 
   const saved = store.updateSettings({
     popupCooldownMinutes: 0,
@@ -985,6 +994,158 @@ test('settings store normalizes configurable behavior', () => {
   assert.equal(defaults.voiceRecordShortcut, 'Alt+R');
   assert.equal(defaults.socialActivityShareLevel, 'presence');
   assert.equal(defaults.activityRetentionDays, 365);
+});
+
+test('screen check defaults to StepFun vision and trusts screenshot analysis over app rules', async () => {
+  const { analyzeScreenActivity, monitorConfig } = require('../src/screen-monitor');
+  const settings = createSettingsStore({ dataDir: tempDir('stepfun-screen-check') }).getSettings();
+  const requests = [];
+
+  const config = monitorConfig(settings, { FOCUS_PET_STEPFUN_API_KEY: 'stepfun-key' });
+  assert.equal(config.provider, 'stepfun');
+  assert.equal(config.endpoint, DEFAULT_STEPFUN_CHAT_ENDPOINT);
+  assert.equal(config.model, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(config.configured, true);
+
+  const result = await analyzeScreenActivity({
+    settings: { ...settings, screenMonitorEnabled: true },
+    env: { FOCUS_PET_STEPFUN_API_KEY: 'stepfun-key' },
+    now: () => new Date('2026-07-02T10:00:00.000Z'),
+    getScreenPermissionStatus: () => 'granted',
+    currentTask: { text: '完成论文阅读笔记' },
+    frontmost: { app: 'Code', title: 'focus-pet' },
+    captureScreen: async () => ({ dataUrl: 'data:image/png;base64,screen', sourceName: 'Screen 1' }),
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                state: 'study',
+                activity_summary: '正在阅读论文资料并整理笔记',
+                task_relevance: 'on_task',
+                evidence: ['屏幕主体是论文内容和笔记编辑区域'],
+                confidence: 0.88,
+                privacy_risk: 'low',
+                suggested_intervention: 'none',
+                reasoning_visible: '截图内容与当前阅读任务一致'
+              })
+            }
+          }]
+        })
+      };
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'study');
+  assert.equal(result.taskRelevance, 'on_task');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, DEFAULT_STEPFUN_CHAT_ENDPOINT);
+  assert.equal(requests[0].options.headers.authorization, 'Bearer stepfun-key');
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(body.model, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(body.reasoning_effort, 'low');
+  assert.equal(body.messages[1].content[1].image_url.url, 'data:image/png;base64,screen');
+  assert.equal(body.messages[1].content[1].image_url.detail, 'low');
+});
+
+test('screen monitor uses Focus Pet Cloud proxy without a desktop LLM API key', async () => {
+  const { analyzeScreenActivity, screenCheckCloudConfig } = require('../src/screen-monitor');
+  const requests = [];
+  const settings = {
+    screenMonitorEnabled: true,
+    screenMonitorProvider: 'stepfun',
+    screenMonitorEndpoint: DEFAULT_STEPFUN_ENDPOINT,
+    screenMonitorModel: DEFAULT_STEPFUN_SCREEN_MODEL,
+    screenCheckCloudUrl: 'https://cloud.example.com/client',
+    screenCheckDeviceId: 'screen-device-a'
+  };
+
+  const cloudConfig = screenCheckCloudConfig(settings, {});
+  assert.equal(cloudConfig.configured, true);
+  assert.equal(cloudConfig.endpoint, 'https://cloud.example.com/api/screen-check');
+
+  const result = await analyzeScreenActivity({
+    settings,
+    env: {},
+    now: () => new Date('2026-07-02T11:00:00.000Z'),
+    getScreenPermissionStatus: () => 'granted',
+    currentTask: { text: '完成论文阅读笔记' },
+    frontmost: { app: 'Preview', title: 'paper.pdf' },
+    captureScreen: async () => ({ dataUrl: 'data:image/png;base64,Y2xvdWQtc2NyZWVu', sourceName: 'Screen 1' }),
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          source: 'focus-pet-cloud-stepfun',
+          state: 'study',
+          status: 'study',
+          activity: '正在阅读论文资料',
+          activitySummary: '正在阅读论文资料',
+          taskRelevance: 'on_task',
+          evidence: ['屏幕主体是论文内容'],
+          confidence: 0.9,
+          privacyRisk: 'low',
+          suggestedIntervention: 'none',
+          reasoningVisible: '画面和任务一致',
+          reason: '画面和任务一致',
+          suggestion: '先继续观察，不主动打扰。',
+          lowConfidence: false,
+          message: '屏幕检查：正在阅读论文资料'
+        })
+      };
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'study');
+  assert.equal(result.source, 'focus-pet-cloud-stepfun');
+  assert.equal(result.screenshot.dataUrl, 'data:image/png;base64,Y2xvdWQtc2NyZWVu');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://cloud.example.com/api/screen-check');
+  assert.equal(requests[0].options.headers['x-focus-pet-device-id'], 'screen-device-a');
+  assert.equal(Object.prototype.hasOwnProperty.call(requests[0].options.headers, 'authorization'), false);
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(body.image.dataUrl, 'data:image/png;base64,Y2xvdWQtc2NyZWVu');
+  assert.equal(body.currentTask.text, '完成论文阅读笔记');
+  assert.equal(body.frontmost.app, 'Preview');
+});
+
+test('settings migration upgrades legacy empty screen analysis defaults to StepFun check', () => {
+  const migrated = migrateSettingsState({
+    version: 1,
+    screenMonitorProvider: 'openai-compatible',
+    screenMonitorEndpoint: '',
+    screenMonitorModel: '',
+    reviewLlmEndpoint: 'https://review.example.com/v1',
+    reviewLlmModel: 'review-model'
+  });
+
+  assert.equal(migrated.screenMonitorProvider, 'stepfun');
+  assert.equal(migrated.screenMonitorEndpoint, DEFAULT_STEPFUN_ENDPOINT);
+  assert.equal(migrated.screenMonitorModel, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(migrated.reviewLlmEndpoint, 'https://review.example.com/v1');
+  assert.equal(migrated.reviewLlmModel, 'review-model');
+});
+
+test('settings migration repairs half-migrated StepFun screen check provider', () => {
+  const migrated = migrateSettingsState({
+    version: 1,
+    screenMonitorProvider: 'openai-compatible',
+    screenMonitorEndpoint: DEFAULT_STEPFUN_ENDPOINT,
+    screenMonitorModel: DEFAULT_STEPFUN_SCREEN_MODEL
+  });
+
+  assert.equal(migrated.screenMonitorProvider, 'stepfun');
+  assert.equal(migrated.screenMonitorEndpoint, DEFAULT_STEPFUN_ENDPOINT);
+  assert.equal(migrated.screenMonitorModel, DEFAULT_STEPFUN_SCREEN_MODEL);
 });
 
 test('update service detects newer GitHub releases and selects a platform download', async () => {
@@ -1944,10 +2105,9 @@ test('LLM connectivity self-check reports missing config without sending request
   const screenCheck = result.checks.find(check => check.id === 'screen-monitor');
   assert.equal(screenCheck.ok, false);
   assert.equal(screenCheck.status, 'needs-config');
-  assert.deepEqual(screenCheck.missing, ['endpoint', 'apiKey']);
-  assert.match(screenCheck.summary, /屏幕监控 LLM 缺少 endpoint、API key/);
-  assert.match(screenCheck.nextSteps.join('\n'), /FOCUS_PET_LLM_API_KEY|OPENAI_API_KEY/);
-  assert.match(screenCheck.nextSteps.join('\n'), /Chat Completions/);
+  assert.deepEqual(screenCheck.missing, ['apiKey']);
+  assert.match(screenCheck.summary, /屏幕检查 LLM 缺少 API key/);
+  assert.match(screenCheck.nextSteps.join('\n'), /FOCUS_PET_SCREEN_LLM_API_KEY|FOCUS_PET_STEPFUN_API_KEY|STEPFUN_API_KEY|STEP_API_KEY/);
 
   const reviewCheck = result.checks.find(check => check.id === 'review-llm');
   assert.equal(reviewCheck.ok, false);
@@ -2011,7 +2171,7 @@ test('LLM connectivity self-check sends minimal requests and explains HTTP failu
   const screenCheck = result.checks.find(check => check.id === 'screen-monitor');
   assert.equal(screenCheck.ok, true);
   assert.equal(screenCheck.status, 'connected');
-  assert.match(screenCheck.summary, /屏幕监控 LLM 连通/);
+  assert.match(screenCheck.summary, /屏幕检查 LLM 连通/);
 
   const reviewCheck = result.checks.find(check => check.id === 'review-llm');
   assert.equal(reviewCheck.ok, false);
@@ -2020,6 +2180,53 @@ test('LLM connectivity self-check sends minimal requests and explains HTTP failu
   assert.match(reviewCheck.summary, /复盘 LLM 请求失败：401/);
   assert.match(reviewCheck.detail, /invalid api key/);
   assert.match(reviewCheck.nextSteps.join('\n'), /API key/);
+});
+
+test('LLM connectivity self-check fails when Focus Pet Cloud screen check reports server config missing', async () => {
+  const { runLlmConnectivitySelfCheck } = require('../src/llm-self-check');
+  const requests = [];
+
+  const result = await runLlmConnectivitySelfCheck({
+    settings: {
+      screenCheckTransport: 'cloud',
+      screenCheckCloudUrl: 'https://cloud.example.com/api/screen-check',
+      reviewLlmProvider: 'ollama',
+      reviewLlmEndpoint: 'http://127.0.0.1:11434',
+      reviewLlmModel: 'llama3'
+    },
+    env: {},
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (String(url).includes('/api/screen-check')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: false,
+            status: 'needs-config',
+            reason: 'Focus Pet Cloud 需要在后端配置 StepFun API key 后才能进行屏幕检查',
+            missing: ['apiKey']
+          })
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: 'ok' } }] })
+      };
+    }
+  });
+
+  const screenCheck = result.checks.find(check => check.id === 'screen-monitor');
+  const reviewCheck = result.checks.find(check => check.id === 'review-llm');
+  assert.equal(result.ok, false);
+  assert.equal(screenCheck.ok, false);
+  assert.equal(screenCheck.status, 'needs-config');
+  assert.equal(screenCheck.usesScreenCheckCloud, true);
+  assert.deepEqual(screenCheck.missing, ['apiKey']);
+  assert.match(screenCheck.summary, /Focus Pet Cloud/);
+  assert.equal(reviewCheck.ok, true);
+  assert.equal(requests.length, 2);
 });
 
 test('LLM connectivity self-check treats local providers as no-key services', async () => {
@@ -3178,6 +3385,84 @@ test('Focus Pet Cloud call audit omits SDP ICE and TURN details', () => {
   assert.doesNotMatch(JSON.stringify(result.state.callAuditLog), /secret-sdp|candidate|turn\.example\.com/);
 });
 
+test('Focus Pet Cloud proxies screen checks through StepFun without returning screenshots or secrets', async () => {
+  const requests = [];
+  const result = await cloudService.handleCloudScreenCheck({
+    body: {
+      image: { dataUrl: 'data:image/png;base64,Y2xvdWQtc2NyZWVu' },
+      currentTask: { text: '完成论文阅读笔记' },
+      frontmost: { app: 'Preview', title: 'paper.pdf' }
+    },
+    env: {
+      FOCUS_PET_CLOUD_STEPFUN_API_KEY: 'server-stepfun-key'
+    },
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                state: 'study',
+                activity_summary: '正在阅读论文资料并整理笔记',
+                task_relevance: 'on_task',
+                evidence: ['屏幕主体是论文内容和笔记区域'],
+                confidence: 0.91,
+                privacy_risk: 'low',
+                suggested_intervention: 'none',
+                reasoning_visible: '截图内容与当前阅读任务一致'
+              })
+            }
+          }]
+        })
+      };
+    },
+    now: () => '2026-07-02T11:30:00.000Z'
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.source, 'focus-pet-cloud-stepfun');
+  assert.equal(result.status, 'study');
+  assert.equal(result.taskRelevance, 'on_task');
+  assert.equal(result.screenshot, undefined);
+  assert.equal(result.image, undefined);
+  assert.equal(result.screenshotPolicy.returnedToClient, false);
+  assert.doesNotMatch(JSON.stringify(result), /Y2xvdWQtc2NyZWVu|server-stepfun-key/);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, DEFAULT_STEPFUN_CHAT_ENDPOINT);
+  assert.equal(requests[0].options.headers.authorization, 'Bearer server-stepfun-key');
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(body.model, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(body.messages[1].content[1].image_url.url, 'data:image/png;base64,Y2xvdWQtc2NyZWVu');
+  assert.match(body.messages[1].content[0].text, /完成论文阅读笔记/);
+});
+
+test('Focus Pet Cloud screen check requires only server-side StepFun configuration', async () => {
+  let calls = 0;
+  const missing = await cloudService.handleCloudScreenCheck({
+    body: {
+      image: { dataUrl: 'data:image/png;base64,Y2xvdWQtc2NyZWVu' }
+    },
+    env: {},
+    fetchImpl: async () => {
+      calls += 1;
+      throw new Error('fetch should not run without server key');
+    },
+    now: () => '2026-07-02T11:32:00.000Z'
+  });
+
+  assert.equal(missing.ok, false);
+  assert.equal(missing.status, 'needs-config');
+  assert.deepEqual(missing.missing, ['apiKey']);
+  assert.equal(calls, 0);
+
+  assert.throws(() => cloudService.normalizeCloudScreenCheckPayload({
+    image: { dataUrl: 'file:///tmp/screenshot.png' }
+  }), /image dataUrl required/);
+});
+
 test('Focus Pet Cloud exposes a Node-only backend entrypoint for public deployment', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
   const source = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'cloud-service.js'), 'utf8');
@@ -3429,6 +3714,26 @@ test('settings page exposes one-click LLM connectivity self-check', () => {
   assert.match(packageJson.scripts.check, /src\/llm-self-check\.js/);
 });
 
+test('settings page presents screenshot analysis as screen check instead of monitoring', () => {
+  const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
+  const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
+  const llmSelfCheck = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'llm-self-check.js'), 'utf8');
+
+  assert.match(indexHtml, /屏幕检查和 LLM 请求集中在这里/);
+  assert.match(indexHtml, /<span>屏幕检查<\/span>/);
+  assert.match(indexHtml, /<span>检查间隔 秒<\/span>/);
+  assert.match(indexHtml, /<option value="stepfun">StepFun 视觉检查<\/option>/);
+  assert.match(indexHtml, /placeholder="https:\/\/api\.stepfun\.com\/v1"/);
+  assert.match(indexHtml, /<button id="testScreenMonitor" type="button">测试检查<\/button>/);
+  assert.doesNotMatch(indexHtml, /测试监控/);
+
+  assert.match(renderer, /app: '屏幕检查'/);
+  assert.match(renderer, /屏幕检查需要 LLM endpoint、model 和 API key/);
+  assert.doesNotMatch(renderer, /屏幕监控需要 LLM endpoint、model 和 API key/);
+  assert.match(llmSelfCheck, /title: '屏幕检查 LLM'/);
+  assert.match(llmSelfCheck, /FOCUS_PET_STEPFUN_API_KEY/);
+});
+
 test('settings page is layered into basic focus AI social and advanced groups', () => {
   const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
   const styles = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'styles.css'), 'utf8');
@@ -3478,9 +3783,10 @@ test('settings page exposes local-first LLM provider controls', () => {
 
   assert.match(indexHtml, /id="settingLlmCloudMode"/);
   assert.match(indexHtml, /value="local-only"[\s\S]*仅本地/);
+  assert.match(indexHtml, /id="settingScreenMonitorProvider"[\s\S]*value="stepfun"[\s\S]*StepFun 视觉检查/);
   assert.match(indexHtml, /id="settingScreenMonitorProvider"[\s\S]*value="ollama"[\s\S]*Ollama/);
   assert.match(indexHtml, /id="settingReviewLlmProvider"[\s\S]*value="local-openai-compatible"[\s\S]*本地 OpenAI-compatible/);
-  assert.match(indexHtml, /http:\/\/127\.0\.0\.1:11434/);
+  assert.match(indexHtml, /placeholder="https:\/\/api\.stepfun\.com\/v1"/);
 
   assert.match(renderer, /llmCloudMode: document\.querySelector\('#settingLlmCloudMode'\)/);
   assert.match(renderer, /screenMonitorProvider: document\.querySelector\('#settingScreenMonitorProvider'\)/);
@@ -3502,7 +3808,7 @@ test('onboarding guide offers three modes and keeps AI/social capabilities opt-i
   assert.match(indexHtml, /id="onboardingPanel" class="onboarding-panel hidden"/);
   assert.match(indexHtml, /data-onboarding-mode="basic" data-onboarding-duration="under-3-minutes"[\s\S]*基础模式[\s\S]*任务 \+ 宠物 \+ 前台 App 判断[\s\S]*会采集什么[\s\S]*不会采集什么[\s\S]*数据保存在哪里[\s\S]*是否会外发[\s\S]*id="completeBasicOnboarding"/);
   assert.match(indexHtml, /data-onboarding-mode="enhanced"[\s\S]*增强模式[\s\S]*工作\/学习\/娱乐关键词[\s\S]*复盘[\s\S]*id="openEnhancedOnboarding"/);
-  assert.match(indexHtml, /data-onboarding-mode="advanced" data-onboarding-default="off"[\s\S]*高级模式[\s\S]*屏幕 LLM[\s\S]*社交监督[\s\S]*WebRTC[\s\S]*id="openAdvancedOnboarding"/);
+  assert.match(indexHtml, /data-onboarding-mode="advanced" data-onboarding-default="off"[\s\S]*高级模式[\s\S]*屏幕检查[\s\S]*社交监督[\s\S]*WebRTC[\s\S]*id="openAdvancedOnboarding"/);
 
   assert.match(renderer, /const onboardingPanel = document\.querySelector\('#onboardingPanel'\)/);
   assert.match(renderer, /const ONBOARDING_MODE_KEY = 'focusPetOnboardingMode'/);

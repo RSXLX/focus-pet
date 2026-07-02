@@ -53,6 +53,8 @@ const settingControls = {
   screenMonitorProvider: document.querySelector('#settingScreenMonitorProvider'),
   screenMonitorEnabled: document.querySelector('#settingScreenMonitorEnabled'),
   screenMonitorIntervalSeconds: document.querySelector('#settingScreenMonitorInterval'),
+  screenCheckTransport: document.querySelector('#settingScreenCheckTransport'),
+  screenCheckCloudUrl: document.querySelector('#settingScreenCheckCloudUrl'),
   screenMonitorEndpoint: document.querySelector('#settingScreenMonitorEndpoint'),
   screenMonitorModel: document.querySelector('#settingScreenMonitorModel'),
   reviewLlmProvider: document.querySelector('#settingReviewLlmProvider'),
@@ -227,7 +229,7 @@ const SURFACE_ANIMATIONS = {
   settings: 'stretch',
   chat: 'morning'
 };
-const AVATAR_INTERACTION_HINT = '按 Enter 或空格摸摸它';
+const AVATAR_INTERACTION_HINT = '按 Enter 或空格摸摸它，或按住鼠标来回轻抚';
 const PET_VIBE_ANIMATIONS = {
   fragile: 'sleep',
   tired: 'sleep',
@@ -456,6 +458,11 @@ const CHAT_VITAL_REPEAT_REASONS = {
 };
 const VITAL_INSIGHT_COOLDOWN_MS = 30000;
 const TOUCH_VITAL_COOLDOWN_MS = 20000;
+const PETTING_GESTURE_MIN_TRAVEL = 52;
+const PETTING_GESTURE_MIN_BACKTRACK_TRAVEL = 38;
+const PETTING_GESTURE_MAX_DISPLACEMENT = 36;
+const PETTING_WINDOW_DRAG_DISPLACEMENT = 24;
+const PETTING_VISUAL_MS = 900;
 const TOUCH_VITAL_EVENTS = {
   fragile: {
     delta: { mood: 1, energy: 2, bond: 1 },
@@ -690,6 +697,7 @@ let pendingChatRtcMode = 'audio';
 let lastAutoPopupAt = 0;
 let recentAutoPopupAt = [];
 let dragState = null;
+let pettingVisualTimer = null;
 let petVitals = { mood: 80, energy: 70, bond: 50 };
 let petVitalsDelta = { mood: 0, energy: 0, bond: 0 };
 let petVitalsReason = '刚醒来，正在适应今天的节奏。';
@@ -734,9 +742,9 @@ let appSettings = {
   screenMonitorEnabled: false,
   screenMonitorIntervalSeconds: 45,
   llmCloudMode: 'allowed',
-  screenMonitorProvider: 'openai-compatible',
-  screenMonitorEndpoint: '',
-  screenMonitorModel: '',
+  screenMonitorProvider: 'stepfun',
+  screenMonitorEndpoint: 'https://api.stepfun.com/v1',
+  screenMonitorModel: 'step-3.7-flash',
   reviewLlmProvider: 'openai-compatible',
   reviewLlmEnabled: true,
   reviewLlmEndpoint: 'https://api.stepfun.com/step_plan/v1',
@@ -1148,6 +1156,101 @@ function bindInteractiveZones() {
   });
 }
 
+function pointerNumber(event, key, fallback = 0) {
+  const value = Number(event[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function avatarLocalPoint(event) {
+  const rect = avatar.getBoundingClientRect();
+  const fallbackX = rect.left + rect.width * 0.5;
+  const fallbackY = rect.top + rect.height * 0.42;
+  const clientX = pointerNumber(event, 'clientX', fallbackX);
+  const clientY = pointerNumber(event, 'clientY', fallbackY);
+  return {
+    x: Math.max(16, Math.min(rect.width - 16, clientX - rect.left)),
+    y: Math.max(18, Math.min(rect.height - 18, clientY - rect.top))
+  };
+}
+
+function setPettingEffectPoint(event) {
+  const point = avatarLocalPoint(event);
+  avatar.style.setProperty('--petting-x', `${Math.round(point.x)}px`);
+  avatar.style.setProperty('--petting-y', `${Math.round(point.y)}px`);
+}
+
+function createPettingGesture(event) {
+  const x = pointerNumber(event, 'screenX');
+  const y = pointerNumber(event, 'screenY');
+  return {
+    startX: x,
+    startY: y,
+    lastX: x,
+    lastY: y,
+    travel: 0,
+    maxDisplacement: 0,
+    lastDirectionX: 0,
+    reversals: 0
+  };
+}
+
+function updatePettingGesture(event) {
+  if (!dragState?.petting) return null;
+  const gesture = dragState.petting;
+  const x = pointerNumber(event, 'screenX', gesture.lastX);
+  const y = pointerNumber(event, 'screenY', gesture.lastY);
+  const stepX = x - gesture.lastX;
+  const stepY = y - gesture.lastY;
+  const stepDistance = Math.hypot(stepX, stepY);
+  if (stepDistance < 1) return gesture;
+
+  const directionX = Math.sign(stepX);
+  if (directionX && gesture.lastDirectionX && directionX !== gesture.lastDirectionX) {
+    gesture.reversals += 1;
+  }
+  if (directionX) gesture.lastDirectionX = directionX;
+  gesture.travel += stepDistance;
+  gesture.maxDisplacement = Math.max(gesture.maxDisplacement, Math.hypot(x - gesture.startX, y - gesture.startY));
+  gesture.lastX = x;
+  gesture.lastY = y;
+  setPettingEffectPoint(event);
+  return gesture;
+}
+
+function isPettingGestureReady(gesture) {
+  if (!gesture || gesture.maxDisplacement > PETTING_GESTURE_MAX_DISPLACEMENT) return false;
+  return gesture.travel >= PETTING_GESTURE_MIN_TRAVEL
+    || (gesture.reversals > 0 && gesture.travel >= PETTING_GESTURE_MIN_BACKTRACK_TRAVEL);
+}
+
+function shouldStartAvatarWindowDrag(dx, dy, gesture) {
+  if (!gesture || dragState?.petted) return false;
+  if (isPettingGestureReady(gesture)) return false;
+  const displacement = Math.hypot(dx, dy);
+  if (displacement < PETTING_WINDOW_DRAG_DISPLACEMENT) return false;
+  return gesture.reversals === 0 || gesture.maxDisplacement > PETTING_GESTURE_MAX_DISPLACEMENT;
+}
+
+function showAvatarPetting(event) {
+  setPettingEffectPoint(event);
+  if (pettingVisualTimer) clearTimeout(pettingVisualTimer);
+  pet.classList.remove('is-petting');
+  void pet.offsetWidth;
+  pet.classList.add('is-petting');
+  pettingVisualTimer = setTimeout(() => {
+    pet.classList.remove('is-petting');
+    pettingVisualTimer = null;
+  }, PETTING_VISUAL_MS);
+}
+
+function finishAvatarPetting(event) {
+  if (!dragState || dragState.petted) return;
+  dragState.petted = true;
+  dragState.moved = true;
+  showAvatarPetting(event);
+  touchPet();
+}
+
 async function startAvatarDrag(event) {
   if (event.button !== 0) return;
   event.preventDefault();
@@ -1162,16 +1265,33 @@ async function startAvatarDrag(event) {
     startScreenY: event.screenY,
     windowX,
     windowY,
-    moved: false
+    moved: false,
+    draggingWindow: false,
+    petted: false,
+    petting: createPettingGesture(event)
   };
+  setPettingEffectPoint(event);
 }
 
 function moveAvatarDrag(event) {
   if (!dragState || dragState.pointerId !== event.pointerId) return;
   const dx = event.screenX - dragState.startScreenX;
   const dy = event.screenY - dragState.startScreenY;
-  if (Math.abs(dx) + Math.abs(dy) > 4) dragState.moved = true;
-  if (dragState.moved) {
+  const gesture = updatePettingGesture(event);
+  if (gesture && gesture.travel > 4) dragState.moved = true;
+  if (dragState.petted) {
+    setPettingEffectPoint(event);
+    return;
+  }
+  if (!dragState.draggingWindow && isPettingGestureReady(gesture)) {
+    finishAvatarPetting(event);
+    return;
+  }
+  if (!dragState.draggingWindow && shouldStartAvatarWindowDrag(dx, dy, gesture)) {
+    dragState.draggingWindow = true;
+    dragState.moved = true;
+  }
+  if (dragState.draggingWindow) {
     if (Math.abs(dx) > 2) playPetAnimation(dx > 0 ? 'running-right' : 'running-left', { locked: true });
     window.focusPet.setWindowPosition(dragState.windowX + dx, dragState.windowY + dy);
   }
@@ -1180,11 +1300,13 @@ function moveAvatarDrag(event) {
 function endAvatarDrag(event) {
   if (!dragState || dragState.pointerId !== event.pointerId) return;
   const wasClick = event.type !== 'pointercancel' && !dragState.moved;
+  const wasPetting = dragState.petted;
   try {
     avatar.releasePointerCapture(event.pointerId);
   } catch {}
   dragState = null;
   if (hoverDepth === 0) window.focusPet.setClickThrough(true);
+  if (wasPetting) return;
   if (!wasClick) {
     petAnimationLocked = false;
     syncPetAnimationToStatus();
@@ -5327,9 +5449,11 @@ function renderSettings(settings) {
   settingControls.voiceRecordShortcut.value = settings.voiceRecordShortcut || 'Alt+R';
   settingControls.petBehaviorIntensity.value = settings.petBehaviorIntensity;
   settingControls.llmCloudMode.value = settings.llmCloudMode || 'allowed';
-  settingControls.screenMonitorProvider.value = settings.screenMonitorProvider || 'openai-compatible';
+  settingControls.screenMonitorProvider.value = settings.screenMonitorProvider || 'stepfun';
   settingControls.screenMonitorEnabled.checked = settings.screenMonitorEnabled;
   settingControls.screenMonitorIntervalSeconds.value = settings.screenMonitorIntervalSeconds;
+  settingControls.screenCheckTransport.value = settings.screenCheckTransport || 'auto';
+  settingControls.screenCheckCloudUrl.value = settings.screenCheckCloudUrl || '';
   settingControls.screenMonitorEndpoint.value = settings.screenMonitorEndpoint || '';
   settingControls.screenMonitorModel.value = settings.screenMonitorModel || '';
   settingControls.reviewLlmProvider.value = settings.reviewLlmProvider || 'openai-compatible';
@@ -5361,6 +5485,8 @@ function collectSettings() {
     screenMonitorProvider: settingControls.screenMonitorProvider.value,
     screenMonitorEnabled: settingControls.screenMonitorEnabled.checked,
     screenMonitorIntervalSeconds: settingControls.screenMonitorIntervalSeconds.value,
+    screenCheckTransport: settingControls.screenCheckTransport.value,
+    screenCheckCloudUrl: settingControls.screenCheckCloudUrl.value,
     screenMonitorEndpoint: settingControls.screenMonitorEndpoint.value,
     screenMonitorModel: settingControls.screenMonitorModel.value,
     reviewLlmProvider: settingControls.reviewLlmProvider.value,
@@ -6531,7 +6657,7 @@ async function testLlmConnectivity() {
       ? 'LLM 自检通过。'
       : 'LLM 自检发现问题，请按下方步骤修复。';
     message.textContent = result.ok
-      ? 'LLM 自检通过，屏幕监控和复盘都能连上。'
+      ? 'LLM 自检通过，屏幕检查和复盘都能连上。'
       : 'LLM 自检发现问题，先按设置里的步骤修好。';
     context.textContent = result.ok ? '设置同步 · LLM 连通' : '设置同步 · LLM 需要处理';
   } catch (error) {
@@ -6565,12 +6691,12 @@ function screenMonitorStatusText(result = {}) {
   }
   if (result.ok) {
     const confidence = Math.round((Number(result.confidence) || 0) * 100);
-    return `屏幕监控：${result.activity || '已完成采样'}${confidence ? ` · ${confidence}%` : ''}`;
+    return `屏幕检查：${result.activity || '已完成采样'}${confidence ? ` · ${confidence}%` : ''}`;
   }
-  if (result.status === 'needs-config') return '屏幕监控需要 LLM endpoint、model 和 API key。';
-  if (result.status === 'permission') return '屏幕监控需要屏幕录制权限。';
-  if (result.status === 'disabled') return '屏幕监控未开启。';
-  return `屏幕监控失败：${result.reason || '未知错误'}`;
+  if (result.status === 'needs-config') return '屏幕检查需要 LLM endpoint、model 和 API key。';
+  if (result.status === 'permission') return '屏幕检查需要屏幕录制权限。';
+  if (result.status === 'disabled') return '屏幕检查未开启。';
+  return `屏幕检查失败：${result.reason || '未知错误'}`;
 }
 
 function applyScreenMonitorResult(result = {}, { manual = false } = {}) {
@@ -6582,7 +6708,7 @@ function applyScreenMonitorResult(result = {}, { manual = false } = {}) {
     const monitorStatus = {
       ok: true,
       status: screenMonitorMood(result.status),
-      app: '屏幕监控',
+      app: '屏幕检查',
       title: result.activity || '',
       reason: result.reason || '',
       message: result.pipelineReview?.llm?.ok
@@ -6595,7 +6721,7 @@ function applyScreenMonitorResult(result = {}, { manual = false } = {}) {
     message.textContent = monitorStatus.message;
     context.textContent = result.pipelineReview?.llm?.ok
       ? `屏幕复盘 · ${result.activity || '当前屏幕'}｜${result.pipelineReview.llm.insight || result.pipelineReview.llm.summary || '已完成复盘'}`
-      : `屏幕监控 · ${result.activity || '当前屏幕'}｜${result.reason || '已完成分析'}`;
+      : `屏幕检查 · ${result.activity || '当前屏幕'}｜${result.reason || '已完成分析'}`;
     maybeAutoPopup(monitorStatus);
   } else {
     const mood = screenMonitorMood(result.status);
