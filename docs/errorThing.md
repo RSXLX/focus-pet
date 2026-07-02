@@ -9994,3 +9994,10 @@
 - 上下文：已在英文和中文 README 中补充社交聊天模式说明、WebRTC/TURN 边界、release preflight 诊断 gate、错误日志 gate 和诊断包范围说明；针对失败测试的精确复跑已通过。
 - 可能原因：README 专业化时过度简化了既有中文聊天说明和诊断发布检查项。
 - 解决状态：已解决
+
+## [2026-07-02 09:52:16 CST]
+- 问题描述：查询 GitHub 中文 README 地址时未给包含 `?ref=main` 的 `gh api` 路径加引号，zsh 将 `?` 解析为通配符导致命令失败。
+- 发生位置：`gh api repos/RSXLX/focus-pet/contents/README.zh-CN.md?ref=main --jq '.html_url'`
+- 上下文：推送 README 双语改动后进行远端文件确认；加引号后 `gh api 'repos/RSXLX/focus-pet/contents/README.zh-CN.md?ref=main' --jq '.html_url'` 已返回 GitHub 文件地址。
+- 可能原因：忽略了 zsh 对未引用问号的 glob 解析。
+- 解决状态：已解决
