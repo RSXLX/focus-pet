@@ -46,6 +46,15 @@ function tempDir(name) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `focus-pet-${name}-`));
 }
 
+function pngSize(filePath) {
+  const buffer = fs.readFileSync(filePath);
+  assert.equal(buffer.toString('ascii', 1, 4), 'PNG');
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20)
+  };
+}
+
 test('json storage writes atomically and backs up corrupt files before fallback', () => {
   const dataDir = tempDir('json-storage');
   const filePath = path.join(dataDir, 'state.json');
@@ -4589,6 +4598,7 @@ test('release preflight checklist documents required gates and supports fast loc
   assert.deepEqual(packageScripts.missingFiles, []);
   assert.deepEqual(packageScripts.missingCheckEntries, []);
   assert.deepEqual(packageScripts.checkedScripts, [
+    'icons:generate',
     'package:mac',
     'package:win',
     'package:mac:controlled',
@@ -5313,6 +5323,7 @@ test('release preflight checklist documents required gates and supports fast loc
   const weakCheckPackageRoot = tempDir('release-preflight-package-scripts-weak-check');
   fs.mkdirSync(path.join(weakCheckPackageRoot, 'scripts'), { recursive: true });
   for (const scriptFile of [
+    'generate-app-icons.js',
     'package-macos.js',
     'package-windows.js',
     'package-remote-client-macos.js',
@@ -5327,6 +5338,7 @@ test('release preflight checklist documents required gates and supports fast loc
   fs.writeFileSync(path.join(weakCheckPackageRoot, 'package.json'), JSON.stringify({
     scripts: {
       check: [
+        'node --check scripts/generate-app-icons.js',
         'node --check scripts/package-macos.js',
         'echo scripts/package-windows.js',
         'node --check scripts/package-remote-client-macos.js',
@@ -5336,6 +5348,7 @@ test('release preflight checklist documents required gates and supports fast loc
         'node --check scripts/run-pet-render-verify.js',
         'echo scripts/test-screen-review-pipeline.js'
       ].join(' && '),
+      'icons:generate': 'node scripts/generate-app-icons.js',
       'package:mac': 'node scripts/package-macos.js',
       'package:win': 'node scripts/package-windows.js',
       'package:mac:controlled': 'node scripts/package-remote-client-macos.js',
@@ -6643,6 +6656,42 @@ test('mac packaging preserves Electron framework symlink targets', () => {
   assert.match(source, /fs\.rmSync\(resourcesApp,\s*\{\s*recursive:\s*true,\s*force:\s*true\s*\}\)/);
   assert.match(source, /Object\.keys\(packageJson\.dependencies \|\| \{\}\)/);
   assert.doesNotMatch(source, /fs\.cpSync\(path\.join\(root,\s*'node_modules'\),\s*path\.join\(resourcesApp,\s*'node_modules'\)/);
+});
+
+test('app logo assets are generated and wired into platform packages', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  const macPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-macos.js'), 'utf8');
+  const remoteMacPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-remote-client-macos.js'), 'utf8');
+  const windowsPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-windows.js'), 'utf8');
+  const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
+  const iconScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'generate-app-icons.js'), 'utf8');
+  const iconDir = path.join(PROJECT_ROOT, 'src', 'assets', 'app-icon');
+
+  assert.equal(packageJson.scripts['icons:generate'], 'node scripts/generate-app-icons.js');
+  assert.match(packageJson.scripts.check, /node --check scripts\/generate-app-icons\.js/);
+  assert.match(iconScript, /idle-standing\.png/);
+  assert.match(iconScript, /buildPortraitCrop/);
+  assert.match(iconScript, /compositeMasked/);
+  assert.match(iconScript, /buildMinimalBackdrop/);
+  assert.doesNotMatch(iconScript, /drawCircleOutline/);
+  assert.doesNotMatch(iconScript, /drawCheck/);
+  assert.match(iconScript, /iconutil/);
+  assert.match(iconScript, /writeIco/);
+
+  const source = path.join(iconDir, 'icon.png');
+  assert.deepEqual(pngSize(source), { width: 1024, height: 1024 });
+  assert.deepEqual(pngSize(path.join(iconDir, 'icon-16.png')), { width: 16, height: 16 });
+  assert.deepEqual(pngSize(path.join(iconDir, 'icon-512.png')), { width: 512, height: 512 });
+  assert.ok(fs.statSync(path.join(iconDir, 'icon.icns')).size > 4096);
+  assert.ok(fs.statSync(path.join(iconDir, 'icon.ico')).size > 4096);
+
+  assert.match(macPackager, /APP_ICON_ICNS/);
+  assert.match(macPackager, /CFBundleIconFile/);
+  assert.match(remoteMacPackager, /APP_ICON_ICNS/);
+  assert.match(remoteMacPackager, /CFBundleIconFile/);
+  assert.match(windowsPackager, /APP_ICON_ICO/);
+  assert.match(main, /APP_ICON_PNG/);
+  assert.match(main, /icon:\s*APP_ICON_PNG/);
 });
 
 test('mac release assets script plans dmg zip and checksum manifest names', () => {

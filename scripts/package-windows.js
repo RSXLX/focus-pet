@@ -9,6 +9,7 @@ const sourceDist = path.join(root, 'node_modules', 'electron', 'dist');
 const distDir = path.join(root, 'dist', 'win-unpacked');
 const outDir = path.join(distDir, appName);
 const resourcesApp = path.join(outDir, 'resources', 'app');
+const APP_ICON_ICO = path.join(root, 'src', 'assets', 'app-icon', 'icon.ico');
 
 function copyProject() {
   fs.rmSync(resourcesApp, { recursive: true, force: true });
@@ -38,6 +39,11 @@ function renameExecutable() {
   return targetExe;
 }
 
+function copyAppIcon() {
+  if (!fs.existsSync(APP_ICON_ICO)) throw new Error(`应用图标不存在：${APP_ICON_ICO}`);
+  fs.copyFileSync(APP_ICON_ICO, path.join(outDir, `${appName}.ico`));
+}
+
 function main() {
   if (process.platform !== 'win32') {
     throw new Error('Windows 打包需要在 Windows 上执行，并先运行 npm install 下载 Windows Electron。');
@@ -47,6 +53,7 @@ function main() {
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.cpSync(sourceDist, outDir, { recursive: true, verbatimSymlinks: true });
   copyProject();
+  copyAppIcon();
   const executable = renameExecutable();
   fs.writeFileSync(path.join(distDir, 'latest-windows.json'), JSON.stringify({
     version: packageJson.version,

@@ -18,6 +18,7 @@ let screenMonitorModule = null;
 let llmSelfCheckModule = null;
 const STOP_MARKER_PATH = path.join(focus.DATA_DIR, 'focus-pet.stop');
 const ERROR_LOG_PATH = path.join(path.resolve(__dirname, '..'), 'docs', 'errorThing.md');
+const APP_ICON_PNG = path.join(__dirname, 'assets', 'app-icon', 'icon.png');
 const PET_GIF_DIR = path.join(__dirname, 'assets', 'pets', 'nervy-sci-fi-kid', 'gifs');
 const PET_GIF_ASSETS = [
   { key: 'tap-heart', label: '摸摸爱心', file: 'tap-heart.gif', sourceType: 'generated-image-pack' },
@@ -319,6 +320,7 @@ function createWindow() {
     skipTaskbar: true,
     hasShadow: false,
     show: false,
+    icon: APP_ICON_PNG,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

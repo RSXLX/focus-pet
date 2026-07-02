@@ -102,6 +102,7 @@ const OPTIMIZATION_PLAN_SECTIONS = [
 ];
 const INCOMPLETE_ACCEPTANCE_STATUS_PATTERN = /(?:[：:\-—–（(]\s*|\s)(?:未完成|部分完成|待完成|进行中|尚未完成|未达成|未通过)(?:[。；;，,）)\s]|$)/;
 const PACKAGE_SCRIPT_REQUIREMENTS = [
+  { script: 'icons:generate', command: 'node scripts/generate-app-icons.js', file: 'scripts/generate-app-icons.js' },
   { script: 'package:mac', command: 'node scripts/package-macos.js', file: 'scripts/package-macos.js' },
   { script: 'package:win', command: 'node scripts/package-windows.js', file: 'scripts/package-windows.js' },
   { script: 'package:mac:controlled', command: 'node scripts/package-remote-client-macos.js', file: 'scripts/package-remote-client-macos.js' },

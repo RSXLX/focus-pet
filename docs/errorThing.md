@@ -10197,3 +10197,73 @@
 - 上下文：Cloud 客户端 HTML title 和 brand 已改回普通 `Focus Pet`；目标测试已新增回归断言并通过。
 - 可能原因：先修复了发布资产命名，遗漏了 Cloud 页面模板里的公开标题。
 - 解决状态：已解决
+
+## [2026-07-02 10:58:55 CST]
+- 问题描述：程序 logo 契约测试红灯，缺少 `scripts/generate-app-icons.js`、应用图标资产和打包脚本图标接线。
+- 发生位置：`test/core.test.js app logo assets are generated and wired into platform packages`；`node --test --test-name-pattern "app logo assets" test/core.test.js`
+- 上下文：新增测试要求生成 `src/assets/app-icon/icon.png`、`.icns`、`.ico`，并要求 macOS/Windows 打包脚本接入应用图标。
+- 可能原因：此前发布包沿用 Electron 默认图标，项目没有独立 app logo 生成和打包配置。
+- 解决状态：未解决
+
+## [2026-07-02 11:01:44 CST]
+- 问题描述：程序 logo 契约测试红灯，缺少 `scripts/generate-app-icons.js`、应用图标资产和打包脚本图标接线。
+- 发生位置：`test/core.test.js app logo assets are generated and wired into platform packages`；`node --test --test-name-pattern "app logo assets" test/core.test.js`
+- 上下文：已新增纯 Node 图标生成器，生成 `src/assets/app-icon/icon.png`、`.icns` 和 `.ico`，并将 macOS/Windows 打包脚本接入应用图标；目标测试已通过。
+- 可能原因：此前发布包沿用 Electron 默认图标，项目没有独立 app logo 生成和打包配置。
+- 解决状态：已解决
+
+## [2026-07-02 11:02:54 CST]
+- 问题描述：发布预检 package-scripts gate 未覆盖 `icons:generate`，图标生成脚本可能被删除或脱离语法检查而不被发布 gate 捕获。
+- 发生位置：`scripts/release-preflight.js PACKAGE_SCRIPT_REQUIREMENTS`；`node --test --test-name-pattern "release preflight checklist" test/core.test.js`
+- 上下文：新增测试要求 package-scripts checkedScripts 包含 `icons:generate`，当前 gate 仍只检查打包、签名、公证和 QA 脚本。
+- 可能原因：程序 logo 是新增发布资产，尚未同步进既有发布脚本静态审计清单。
+- 解决状态：未解决
+
+## [2026-07-02 11:03:18 CST]
+- 问题描述：发布预检 package-scripts gate 未覆盖 `icons:generate`，图标生成脚本可能被删除或脱离语法检查而不被发布 gate 捕获。
+- 发生位置：`scripts/release-preflight.js PACKAGE_SCRIPT_REQUIREMENTS`；`node --test --test-name-pattern "release preflight checklist" test/core.test.js`
+- 上下文：`PACKAGE_SCRIPT_REQUIREMENTS` 已纳入 `icons:generate`，并要求 `node --check scripts/generate-app-icons.js` 覆盖图标生成脚本。
+- 可能原因：程序 logo 是新增发布资产，尚未同步进既有发布脚本静态审计清单。
+- 解决状态：已解决
+
+## [2026-07-02 11:07:29 CST]
+- 问题描述：中止全身版 logo 上传后，GitHub Release v1.0.0 远端资产暂时只剩 manifest，DMG/ZIP 下载文件缺失。
+- 发生位置：`gh release upload v1.0.0 --clobber` 被用户新需求中断后；`gh release view v1.0.0 --repo RSXLX/focus-pet --json assets`
+- 上下文：用户要求将 logo 改为半身可爱头像，为避免继续发布全身版安装包，中止了正在上传的大文件；本地 `dist/release/v1.0.0` 仍保留完整 DMG/ZIP/manifest。
+- 可能原因：GitHub CLI 的 `--clobber` 会先替换/删除同名资产，命令被中断时大文件尚未重新上传完成。
+- 解决状态：未解决
+
+## [2026-07-02 11:08:23 CST]
+- 问题描述：半身可爱 logo 契约测试红灯，当前图标生成器仍缺少半身裁剪和头像遮罩逻辑。
+- 发生位置：`test/core.test.js app logo assets are generated and wired into platform packages`；`node --test --test-name-pattern "app logo assets" test/core.test.js`
+- 上下文：用户要求 logo 不要全身小人，改成半身可爱头像；新增测试要求 `scripts/generate-app-icons.js` 包含 `buildPortraitCrop` 和 `compositeMasked`。
+- 可能原因：上一版生成器直接缩放完整 `idle-standing.png`，构图仍偏全身。
+- 解决状态：未解决
+
+## [2026-07-02 11:10:18 CST]
+- 问题描述：极简 logo 契约测试红灯，当前半身版图标仍包含复杂圆环和勾标装饰。
+- 发生位置：`test/core.test.js app logo assets are generated and wired into platform packages`；`node --test --test-name-pattern "app logo assets" test/core.test.js`
+- 上下文：用户要求 logo 需要更极简；新增测试要求图标生成器包含 `buildMinimalBackdrop`，并移除 `drawCircleOutline` 和 `drawCheck`。
+- 可能原因：上一版半身头像保留了 Focus 圆环和蓝色确认标，视觉元素仍偏多。
+- 解决状态：未解决
+
+## [2026-07-02 11:11:15 CST]
+- 问题描述：半身可爱 logo 契约测试红灯，当前图标生成器仍缺少半身裁剪和头像遮罩逻辑。
+- 发生位置：`test/core.test.js app logo assets are generated and wired into platform packages`；`node --test --test-name-pattern "app logo assets" test/core.test.js`
+- 上下文：已新增 `buildPortraitCrop` 和 `compositeMasked`，图标改为头肩半身裁剪；目标测试通过。
+- 可能原因：上一版生成器直接缩放完整 `idle-standing.png`，构图仍偏全身。
+- 解决状态：已解决
+
+## [2026-07-02 11:11:15 CST]
+- 问题描述：极简 logo 契约测试红灯，当前半身版图标仍包含复杂圆环和勾标装饰。
+- 发生位置：`test/core.test.js app logo assets are generated and wired into platform packages`；`node --test --test-name-pattern "app logo assets" test/core.test.js`
+- 上下文：已新增 `buildMinimalBackdrop`，移除复杂圆环和勾标，只保留浅色圆角底板、淡色头像承托圆和小人头肩半身；目标测试通过。
+- 可能原因：上一版半身头像保留了 Focus 圆环和蓝色确认标，视觉元素仍偏多。
+- 解决状态：已解决
+
+## [2026-07-02 11:14:27 CST]
+- 问题描述：中止全身版 logo 上传后，GitHub Release v1.0.0 远端资产暂时只剩 manifest，DMG/ZIP 下载文件缺失。
+- 发生位置：`gh release upload v1.0.0 --clobber` 被用户新需求中断后；`gh release view v1.0.0 --repo RSXLX/focus-pet --json assets`
+- 上下文：已使用极简半身 logo 重新构建 `Focus-Pet-1.0.0-mac-arm64.dmg`、`.zip` 和 manifest，并重新上传到 GitHub Release v1.0.0；远端资产列表已恢复三件套。
+- 可能原因：GitHub CLI 的 `--clobber` 会先替换/删除同名资产，命令被中断时大文件尚未重新上传完成。
+- 解决状态：已解决
