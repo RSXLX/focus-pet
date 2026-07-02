@@ -10113,3 +10113,17 @@
 - 上下文：删除烟测状态文件并重建容器后做健康检查；随后日志显示 Node 服务已监听，状态文件被重新创建，连续复查 `/healthz` 返回 200 且 `users` 为 0。
 - 可能原因：Modal 重建容器期间首次请求命中冷启动或 Web Server 代理短暂不可用窗口。
 - 解决状态：已解决
+
+## [2026-07-02 10:22:06 CST]
+- 问题描述：控制端/被控制端边界红灯测试失败，peer 在非 `presence` 档位仍能收到 activity 摘要和远端客户端活动面板。
+- 发生位置：`src/chat-service.js activitiesForAuth / activityEventForAuth / messageForAuth / remoteClientHtml`；`node --test --test-name-pattern "external chat|remote social client" test/core.test.js`
+- 上下文：新增测试要求被控制端不接收任何对方或自己的截图分析结果，控制端本机仍可查看完整活动快照。
+- 可能原因：此前的社交共享设计允许 peer 在 `status`、`summary`、`screen-summary` 档位接收降级活动摘要，并在远端客户端渲染活动面板。
+- 解决状态：未解决
+
+## [2026-07-02 10:26:15 CST]
+- 问题描述：控制端/被控制端边界红灯测试失败，peer 在非 `presence` 档位仍能收到 activity 摘要和远端客户端活动面板。
+- 发生位置：`src/chat-service.js activitiesForAuth / activityEventForAuth / messageForAuth / remoteClientHtml`；`node --test --test-name-pattern "external chat|remote social client" test/core.test.js`
+- 上下文：已将 peer 出站 `activities`、`activityLog`、WebSocket `activity` 和 `messages[*].activity` 全部阻断，并移除被控制端活动面板；社交定向测试已通过。
+- 可能原因：此前的社交共享设计允许 peer 在 `status`、`summary`、`screen-summary` 档位接收降级活动摘要，并在远端客户端渲染活动面板。
+- 解决状态：已解决

@@ -333,14 +333,15 @@ FOCUS_PET_RTC_ICE_SERVERS
 7. 首次通话前确认 WebRTC 网络提示。
 8. 可通过 WebRTC 进行实时语音或视频通话。
 
-社交共享档位：
+控制端 / 被控制端边界：
 
-- 只共享在线状态：默认档位，对端只看到在线/离线，不接收活动快照或活动历史。
-- 共享工作/学习/休息状态：对端只看到专注中、学习中、休息中、游戏中、可能偏离或观察中。
-- 共享状态摘要：对端可看到当前状态摘要、建议和置信度。
-- 共享屏幕分析摘要：对端可看到屏幕分析摘要、原因、建议、复盘 insight 和最近摘要历史。
-
-无论选择哪一档，peer 端都不会收到当前任务、前台 App 名称、窗口标题、截图媒体或内部采集源名称 `sourceName`。`presence` 下 peer 的 `activities` 和 `activityLog` 始终为空，即使服务端已有该 peer 自己的活动记录也不下发，WebSocket 也不发送 activity 事件。`summary` 和 `screen-summary` 的展示 `message` 只由允许共享的活动摘要生成，不使用内部自定义 message；`screen-summary` 中的复盘信息也只下发 `review.insight`，不下发复盘 summary、petMessage、tone、status 或 ok。桌面端和远端社交端的 peer 活动视图也不消费当前任务、前台 App、窗口标题或截图媒体字段。聊天消息中的结构化 `messages[*].activity` 会按同一共享级别降级，避免绕过活动快照和活动历史的出站过滤；peer 自己发送的 activity 消息返回给该 peer 时也不保留完整活动字段。peer 自身活动如果出现在服务端状态或 WebSocket 事件中，也会走同一共享契约降级；`status` 和 `summary` 不返回活动历史，`screen-summary` 只返回已降级摘要历史。owner 尚无活动快照时，非 `presence` 档位也返回空活动状态，不生成占位活动或服务端错误。owner 本机仍保留完整活动数据，用于本机复盘和诊断。
+- 控制端是 owner，本机可查看被控制端提交的完整活动快照和屏幕分析结果。
+- 被控制端是 peer，公开下载包只提供加入会话、文字/媒体消息、语音消息和 WebRTC 语音/视频。
+- 被控制端的 `/api/state` 中 `activities` 恒为空对象，`activityLog` 恒为空数组。
+- 被控制端不会收到 WebSocket `activity` 事件。
+- 被控制端消息列表里的 `messages[*].activity` 恒为 `null`，不能通过消息回读对方或自己的截图分析。
+- 被控制端发布包不渲染“对方正在做什么”或截图分析面板。
+- 公开发布使用 `npm run package:mac:controlled`；完整桌面端保留为本地控制端/开发端。
 
 ## 5. 权限与隐私边界
 
@@ -363,7 +364,7 @@ FOCUS_PET_RTC_ICE_SERVERS
 
 只有开启屏幕监控后，才会截取屏幕缩略图并发送给用户配置的 LLM endpoint。用户需要自行确认该 endpoint 的数据策略。
 
-社交监督默认不共享采集到的前台 App、窗口标题、当前任务或截图媒体。只有用户在社交设置中主动提高共享档位后，peer 才能看到对应的状态摘要；出站过滤在聊天服务端执行。
+社交监督的活动与截图分析只进入控制端本机视图。被控制端不会从 `/api/state`、WebSocket `activity` 事件或消息列表回读对方或自己的截图分析结果；出站过滤在聊天服务端执行。
 
 macOS 需要辅助功能权限读取前台窗口；屏幕监控还需要屏幕录制权限。
 
@@ -406,7 +407,7 @@ CLI 参数同时支持等号写法，例如 `npm run release:preflight -- --run=
 
 `release:preflight` 的 full 模式在 fast gate 之后继续执行 `npm run verify:pet-render` 和 `npm run test:screen-pipeline`。后者用于发布前确认手动屏幕分析、结构化 LLM 输出和复盘 LLM 串联；运行时需要屏幕监控和复盘 LLM 配置可用。
 
-`release:preflight` 的 package 模式在 macOS 上包含 `npm run package:mac`、`npm run sign:mac && npm run verify:mac` 和 `npm run notarize:mac && npm run verify:mac`；公证需要 Apple ID、Team ID 和 App 专用密码，staple 后会再次执行 Gatekeeper/签名验证。远端社交客户端 mac 包会作为清单中的人工条件项显示，部署 HTTPS 客户端并设置 `REMOTE_CLIENT_URL` 后单独执行 `npm run package:mac:remote-client`，其中 URL 必须指向 `/client` 或 `/client/...` 路径；打包出的客户端只向与该 URL 精确同源的页面授予麦克风/摄像头权限，内嵌导航只保留同源 `/client` 页面，跳出范围的 http/https 导航交给系统浏览器，非 http/https 外链会被拒绝打开；该步骤不随 `--run package` 自动运行。Windows package 模式包含 `npm run package:win`，需要在 Windows 环境执行。
+`release:preflight` 的 package 模式在 macOS 上包含 `npm run package:mac`、`npm run sign:mac && npm run verify:mac` 和 `npm run notarize:mac && npm run verify:mac`；公证需要 Apple ID、Team ID 和 App 专用密码，staple 后会再次执行 Gatekeeper/签名验证。公开分发应使用被控制端包：部署 HTTPS 客户端并设置 `REMOTE_CLIENT_URL` 后单独执行 `npm run package:mac:controlled`，其中 URL 必须指向 `/client` 或 `/client/...` 路径；打包出的客户端只向与该 URL 精确同源的页面授予麦克风/摄像头权限，内嵌导航只保留同源 `/client` 页面，跳出范围的 http/https 导航交给系统浏览器，非 http/https 外链会被拒绝打开；该步骤不随 `--run package` 自动运行。`npm run package:mac:remote-client` 作为同一打包器的兼容别名保留。Windows package 模式包含 `npm run package:win`，需要在 Windows 环境执行。
 
 ### 6.4 打包
 

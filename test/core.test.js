@@ -2075,7 +2075,7 @@ test('external chat handles missing owner activity across sharing levels', () =>
   }
 });
 
-test('external chat sanitizes peer-owned activity before returning peer state', () => {
+test('external chat keeps controlled clients blind to activity snapshots', () => {
   const peerOwnActivity = {
     id: 'peer-own-activity',
     from: 'peer-1',
@@ -2118,11 +2118,20 @@ test('external chat sanitizes peer-owned activity before returning peer state', 
       settings: { socialActivityShareLevel }
     });
     const serialized = JSON.stringify(peerState);
-    assert.doesNotMatch(serialized, /currentTask|frontmost|sourceName|media|PeerSecretApp|peer-secret-title|peer-screen\.png|peer 私密任务|peer 内部 message|peer 复盘完整摘要|peer 私密宠物消息|calm/);
+    assert.deepEqual(peerState.activities, {});
+    assert.deepEqual(peerState.activityLog, []);
+    assert.doesNotMatch(serialized, /peer 可共享学习状态|currentTask|frontmost|sourceName|media|PeerSecretApp|peer-secret-title|peer-screen\.png|peer 私密任务|peer 内部 message|peer 复盘完整摘要|peer 私密宠物消息|calm/);
   }
+
+  const ownerState = chatService.clientStateForAuth(chatService.resolveAuth('owner-token', state), state, {
+    port: 47321,
+    settings: { socialActivityShareLevel: 'screen-summary' }
+  });
+  assert.equal(ownerState.activities['peer-1'].frontmost.app, 'PeerSecretApp');
+  assert.equal(ownerState.activityLog[0].currentTask.text, 'peer 私密任务');
 });
 
-test('external chat sanitizes WebSocket activity events for peer-owned activity', () => {
+test('external chat only sends activity WebSocket events to the controller', () => {
   assert.equal(typeof chatService.activityEventForAuth, 'function');
   const peerOwnActivity = {
     id: 'peer-ws-activity',
@@ -2156,11 +2165,7 @@ test('external chat sanitizes WebSocket activity events for peer-owned activity'
   const ownerAuth = { role: 'owner', peerId: 'pet-owner', name: '我' };
 
   assert.equal(chatService.activityEventForAuth(peerOwnActivity, peerAuth, state, 'presence'), null);
-  const peerPayload = chatService.activityEventForAuth(peerOwnActivity, peerAuth, state, 'screen-summary');
-  assert.equal(peerPayload.activity, 'peer WebSocket 可共享学习状态');
-  assert.equal(peerPayload.reason, 'peer WebSocket 屏幕里有私密课程');
-  assert.deepEqual(peerPayload.review, { insight: 'peer websocket 学习节奏稳定' });
-  assert.doesNotMatch(JSON.stringify(peerPayload), /currentTask|frontmost|sourceName|media|PeerSecretApp|peer-secret-title|peer-ws-screen\.png|peer websocket 私密任务|peer websocket 内部 message|peer websocket 复盘完整摘要|peer websocket 私密宠物消息|calm/);
+  assert.equal(chatService.activityEventForAuth(peerOwnActivity, peerAuth, state, 'screen-summary'), null);
 
   const ownerPayload = chatService.activityEventForAuth(peerOwnActivity, ownerAuth, state, 'presence');
   assert.equal(ownerPayload.currentTask.text, 'peer websocket 私密任务');
@@ -2239,15 +2244,11 @@ test('external chat applies social activity sharing levels before peer state exp
     port: 47321,
     settings: { socialActivityShareLevel: 'screen-summary' }
   });
-  assert.equal(screenSummaryState.activities['pet-owner'].activity, '正在复习线性代数');
-  assert.equal(screenSummaryState.activities['pet-owner'].message, '正在复习线性代数');
-  assert.equal(screenSummaryState.activities['pet-owner'].sourceName, undefined);
-  assert.equal(screenSummaryState.activities['pet-owner'].reason, '屏幕中是课程笔记和习题');
-  assert.deepEqual(screenSummaryState.activities['pet-owner'].review, { insight: '学习内容和任务一致' });
-  assert.deepEqual(screenSummaryState.activityLog.map(activity => activity.id), ['activity-1']);
+  assert.deepEqual(screenSummaryState.activities, {});
+  assert.deepEqual(screenSummaryState.activityLog, []);
 
   const serialized = JSON.stringify(screenSummaryState);
-  assert.doesNotMatch(serialized, /私密 message|confidential deck|完成线代错题本|Obsidian|linear-algebra-private|study-screen\.png|长期上下文|私人节奏|calm/);
+  assert.doesNotMatch(serialized, /正在复习线性代数|屏幕中是课程笔记和习题|学习内容和任务一致|私密 message|confidential deck|完成线代错题本|Obsidian|linear-algebra-private|study-screen\.png|长期上下文|私人节奏|calm/);
 });
 
 test('external chat applies social activity sharing levels to activity messages', () => {
@@ -2337,29 +2338,12 @@ test('external chat applies social activity sharing levels to activity messages'
     port: 47321,
     settings: { socialActivityShareLevel: 'screen-summary' }
   });
-  const peerMessageActivity = peerState.messages[0].activity;
-
-  assert.equal(peerMessageActivity.activity, '正在整理产品优化方案');
-  assert.equal(peerMessageActivity.message, '正在整理产品优化方案');
-  assert.equal(peerMessageActivity.reason, '屏幕中是优化方案和任务清单');
-  assert.deepEqual(peerMessageActivity.review, { insight: '方案整理和当前目标一致' });
-  assert.equal(peerMessageActivity.sourceName, undefined);
-  assert.equal(peerMessageActivity.currentTask, undefined);
-  assert.equal(peerMessageActivity.frontmost, undefined);
-  assert.equal(peerMessageActivity.media, undefined);
+  assert.equal(peerState.messages[0].activity, null);
+  assert.equal(peerState.messages[1].activity, null);
   assert.equal(ownerState.messages[0].activity.currentTask.text, '重排 Focus Pet 路线图');
   assert.equal(ownerState.messages[0].activity.frontmost.app, 'Notion');
   assert.equal(ownerState.messages[1].activity.currentTask.text, 'peer 消息私密任务');
   assert.equal(ownerState.messages[1].activity.frontmost.app, 'PeerSecretApp');
-
-  const peerOwnMessageActivity = peerState.messages[1].activity;
-  assert.equal(peerOwnMessageActivity.activity, 'peer 消息可共享学习状态');
-  assert.equal(peerOwnMessageActivity.reason, 'peer 消息屏幕中是课程笔记');
-  assert.deepEqual(peerOwnMessageActivity.review, { insight: 'peer 消息学习节奏稳定' });
-  assert.equal(peerOwnMessageActivity.sourceName, undefined);
-  assert.equal(peerOwnMessageActivity.currentTask, undefined);
-  assert.equal(peerOwnMessageActivity.frontmost, undefined);
-  assert.equal(peerOwnMessageActivity.media, undefined);
 
   const presencePeerState = chatService.clientStateForAuth(peerAuth, state, {
     port: 47321,
@@ -2827,6 +2811,7 @@ test('remote client mac packaging wraps the deployed HTTPS client', () => {
   const packager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-remote-client-macos.js'), 'utf8');
 
   assert.equal(packageJson.scripts['package:mac:remote-client'], 'node scripts/package-remote-client-macos.js');
+  assert.equal(packageJson.scripts['package:mac:controlled'], 'node scripts/package-remote-client-macos.js');
   assert.match(packager, /REMOTE_CLIENT_URL/);
   assert.match(packager, /if \(require\.main === module\)/);
   assert.match(packager, /parsed\.protocol !== 'https:'/);
@@ -3121,9 +3106,9 @@ test('remote social client supports invite onboarding, messaging, and WebRTC cal
   assert.match(chatService, />语音消息<\/button>/);
   assert.match(chatService, /FILE_ACCEPT/);
   assert.match(chatService, /className='file-card'/);
-  assert.match(chatService, /id="activity"/);
-  assert.match(chatService, /id="activityImage"/);
-  assert.match(chatService, /id="activityLog"/);
+  assert.doesNotMatch(chatService, /id="activity"/);
+  assert.doesNotMatch(chatService, /id="activityImage"/);
+  assert.doesNotMatch(chatService, /id="activityLog"/);
   assert.match(chatService, /<aside class="sidebar">[\s\S]*<h2>好友<\/h2>[\s\S]*<div id="friends"><\/div>[\s\S]*<\/aside>/);
   assert.match(chatService, /<div id="messages" class="messages"><\/div>/);
   assert.match(chatService, /id="callAudio"/);
@@ -3314,10 +3299,11 @@ test('settings page is layered into basic focus AI social and advanced groups', 
   assert.match(indexHtml, /id="settingsGroupFocus"[\s\S]*id="settingFocusKeywords"[\s\S]*id="settingStudyKeywords"[\s\S]*id="settingGameKeywords"[\s\S]*id="settingDistractionKeywords"[\s\S]*id="settingGameApps"[\s\S]*id="settingWorkApps"/);
   assert.match(indexHtml, /id="settingsGroupAi"[\s\S]*data-setting-risk="ai"[\s\S]*id="settingScreenMonitorEnabled"[\s\S]*id="settingScreenMonitorEndpoint"[\s\S]*id="settingReviewLlmEnabled"[\s\S]*id="testLlmConnectivity"[\s\S]*id="testScreenMonitor"/);
   assert.match(indexHtml, /id="settingsGroupSocial"[\s\S]*data-setting-risk="social"[\s\S]*id="settingSocialActivityShareLevel"[\s\S]*id="settingMediaMb"[\s\S]*id="settingVoiceShortcut"[\s\S]*邀请码[\s\S]*通话配置/);
-  assert.match(indexHtml, /value="presence"[\s\S]*只共享在线状态/);
-  assert.match(indexHtml, /value="status"[\s\S]*共享工作\/学习\/休息状态/);
-  assert.match(indexHtml, /value="summary"[\s\S]*共享状态摘要/);
-  assert.match(indexHtml, /value="screen-summary"[\s\S]*共享屏幕分析摘要/);
+  assert.match(indexHtml, /value="presence"[\s\S]*仅记录在线状态/);
+  assert.match(indexHtml, /value="status"[\s\S]*控制端记录工作\/学习\/休息状态/);
+  assert.match(indexHtml, /value="summary"[\s\S]*控制端记录状态摘要/);
+  assert.match(indexHtml, /value="screen-summary"[\s\S]*控制端记录屏幕分析摘要/);
+  assert.match(indexHtml, /被控制端不会回读对方截图分析结果/);
   assert.match(indexHtml, /id="settingsGroupAdvanced"[\s\S]*data-setting-risk="advanced"[\s\S]*id="settingUpdateUrl"[\s\S]*id="settingActivityRetentionDays"[\s\S]*id="openDataFromSettings"[\s\S]*id="runDiagnosticsFromSettings"[\s\S]*id="permissionGuide"/);
 
   assert.match(renderer, /const settingGroupButtons = Array\.from\(document\.querySelectorAll\('\[data-settings-tab\]'\)\)/);

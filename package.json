@@ -21,6 +21,7 @@
     "package:mac": "node scripts/package-macos.js",
     "release:mac": "node scripts/create-mac-release-assets.js",
     "package:win": "node scripts/package-windows.js",
+    "package:mac:controlled": "node scripts/package-remote-client-macos.js",
     "package:mac:remote-client": "node scripts/package-remote-client-macos.js",
     "sign:mac": "node scripts/sign-macos.js",
     "notarize:mac": "node scripts/notarize-macos.js",

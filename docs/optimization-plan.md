@@ -560,55 +560,50 @@
 
 权限级别：
 
-- 只共享在线状态。
-- 共享工作/学习/休息状态。
-- 共享状态摘要。
-- 共享屏幕分析摘要。
+- 被控制端只回读在线状态、聊天消息和通话状态。
+- 控制端本机可以记录工作/学习/休息状态。
+- 控制端本机可以记录状态摘要。
+- 控制端本机可以记录屏幕分析摘要。
 
-默认只共享最小状态，不共享 App 名称、窗口标题或历史摘要。
+默认只让被控制端看到最小状态，不向被控制端下发 App 名称、窗口标题、历史摘要或截图分析结果。
 
 详细方案：
 
-- 设置项：新增 `socialActivityShareLevel`，默认 `presence`。
-- `presence`：只让对端看到在线/离线，不下发活动快照，不下发活动历史。
-- `status`：只共享当前状态枚举和通用文案，例如专注中、学习中、休息中、游戏中、可能偏离。
-- `summary`：共享当前状态摘要、建议和置信度，但不共享当前任务、前台 App、窗口标题、截图媒体或历史。
-- `screen-summary`：共享屏幕分析摘要、原因、建议、复盘 insight 和最近活动历史；仍不向 peer 暴露当前任务、前台 App、窗口标题和截图媒体。
-- 服务端统一在 `clientStateForAuth()` 和 WebSocket `activity` 事件出站前降级，不依赖前端隐藏字段。
+- 设置项：保留 `socialActivityShareLevel`，默认 `presence`，但它只影响控制端本机记录策略，不再让 peer 回读活动摘要。
+- `presence`：被控制端只看到在线/离线，不下发活动快照，不下发活动历史。
+- `status`：控制端本机可记录当前状态枚举和通用文案，例如专注中、学习中、休息中、游戏中、可能偏离。
+- `summary`：控制端本机可记录当前状态摘要、建议和置信度。
+- `screen-summary`：控制端本机可记录屏幕分析摘要、原因、建议、复盘 insight 和最近活动历史。
+- 服务端统一在 `clientStateForAuth()`、`messageForAuth()` 和 WebSocket `activity` 事件出站前阻断 peer 活动回读，不依赖前端隐藏字段。
 - owner 本机状态和本地 activity log 保留完整数据，用于本机复盘和调试。
 - 本阶段不实现隐私模式、敏感 App 列表、窗口标题脱敏和用户纠错机制。
 
-当前执行进展（2026-06-30）：
+当前执行进展（2026-07-02）：
 
-- 设置系统已新增 `socialActivityShareLevel`，并在社交设置页提供四档选择。
-- 聊天服务已新增 `sharedActivityForLevel()`，统一处理 peer 端活动快照降级。
-- Peer 默认 `presence` 下只保留消息会话和在线状态，`activities` 与 `activityLog` 为空。
-- `status`、`summary`、`screen-summary` 三档已分别限制字段范围。
-- Peer 自身活动出站也已复用同一共享契约降级：`presence` 始终不下发活动快照或历史；`status`、`summary` 不下发活动历史；`screen-summary` 只下发降级后的摘要历史，不透传 `currentTask`、`frontmost`、`sourceName`、`media` 或完整 review。
-- Peer 端不接收内部采集源名称 `sourceName`。
-- `summary` 和 `screen-summary` 的 peer 可见 `message` 只由允许共享的活动摘要生成，不使用内部活动快照的自定义 `message`。
-- `screen-summary` 的复盘信息只向 peer 下发 `review.insight`，不会共享复盘 `summary`、`petMessage`、`tone`、`status` 或 `ok`。
-- 桌面端和远端社交端的 peer 活动视图已收敛到共享契约字段，不再渲染当前任务、前台 App、窗口标题或截图媒体。
-- 聊天消息内的结构化 `messages[*].activity` 已复用同一共享级别降级规则，避免通过消息列表或 WebSocket `message` 事件绕过活动边界；peer 自己发送的 activity 消息返回给该 peer 时也只保留共享契约字段。
-- Owner 尚无活动快照时，`status`、`summary` 和 `screen-summary` 档位会返回空活动，不会产生服务端错误或占位泄露。
-- WebSocket 活动事件已按同一 peer 出站契约过滤，避免绕过 `/api/state` 的权限边界；`presence` 不发送 activity 事件，peer 自身活动也不会通过完整 payload 快捷分支绕过字段白名单。
-- `distracted` 的 peer 侧通用状态文案已统一为“可能偏离”，避免社交监督里出现更强的“跑偏”措辞。
-- 活动状态已支持 `work`、`study`、`rest`、`game`、`distracted`、`unknown`。
+- 社交端已改为控制端 / 被控制端模型。
+- Owner 是控制端，本机保留完整活动快照、屏幕分析结果和本机复盘数据。
+- Peer 是被控制端，公开下载包只提供加入会话、消息、语音消息和 WebRTC 语音/视频。
+- Peer 的 `/api/state` 中 `activities` 恒为空对象，`activityLog` 恒为空数组，不随 `socialActivityShareLevel` 改变。
+- Peer 不接收 WebSocket `activity` 事件。
+- Peer 的 `messages[*].activity` 恒为 `null`，避免通过消息列表绕过活动边界。
+- Peer 即使提交自己的活动快照，也不会从服务端回读该快照；该数据只进入 owner 本机视图。
+- 被控制端远端客户端已移除“对方正在做什么”/截图分析面板。
+- 公开发布脚本新增 `npm run package:mac:controlled`，复用 HTTPS 远端客户端打包器；完整桌面端保留为控制端/开发端。
 - 已补单元测试覆盖默认最小共享、四档共享字段边界、设置归一化和设置页接线。
 
 当前 5.3 验收状态：
 
-- 默认只共享在线状态：已完成。
-- 共享工作/学习/休息状态：已完成。
-- 共享状态摘要：已完成。
-- 共享屏幕分析摘要：已完成。
+- 被控制端默认只回读在线状态、聊天消息和通话状态：已完成。
+- 控制端本机可保留工作/学习/休息状态：已完成。
+- 控制端本机可保留状态摘要：已完成。
+- 控制端本机可保留屏幕分析摘要：已完成。
 - 不共享 App 名称、窗口标题、截图媒体或当前任务给 peer：已完成。
 - 不共享内部采集源名称 `sourceName` 给 peer：已完成。
 - 不共享内部活动自定义 message 给 peer：已完成。
 - 不共享复盘 summary、petMessage、tone、status 或 ok 给 peer：已完成。
-- Peer 活动 UI 不消费当前任务、前台 App、窗口标题或截图媒体字段：已完成。
-- 消息内结构化 activity 不绕过社交共享级别：已完成。
-- 缺失 owner 活动快照时各共享档位稳定返回空活动：已完成。
+- Peer 活动 UI 已从被控制端发布包移除：已完成。
+- 消息内结构化 activity 不绕过控制端/被控制端边界：已完成。
+- 缺失 owner 活动快照时各档位稳定返回空活动：已完成。
 - Peer 自身活动不绕过共享契约字段白名单：已完成。
 
 ## 6. 不建议早期投入

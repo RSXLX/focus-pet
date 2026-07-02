@@ -169,17 +169,17 @@
         </section>
 
         <section id="settingsGroupSocial" class="settings-group" data-settings-group="social" data-setting-risk="social" aria-labelledby="settingsTabSocial" hidden>
-          <label class="setting-line"><span>状态共享</span>
+          <label class="setting-line"><span>控制端可见性</span>
             <select id="settingSocialActivityShareLevel">
-              <option value="presence">只共享在线状态</option>
-              <option value="status">共享工作/学习/休息状态</option>
-              <option value="summary">共享状态摘要</option>
-              <option value="screen-summary">共享屏幕分析摘要</option>
+              <option value="presence">仅记录在线状态</option>
+              <option value="status">控制端记录工作/学习/休息状态</option>
+              <option value="summary">控制端记录状态摘要</option>
+              <option value="screen-summary">控制端记录屏幕分析摘要</option>
             </select>
           </label>
           <label class="setting-line"><span>媒体上限 MB</span><input id="settingMediaMb" type="number" min="1" max="100" /></label>
           <label class="setting-line"><span>语音快捷键</span><input id="settingVoiceShortcut" type="text" placeholder="Alt+R" maxlength="40" spellcheck="false" /></label>
-          <div class="settings-risk-note">邀请码、外部会话和通话配置在聊天面板管理。</div>
+          <div class="settings-risk-note">邀请码、外部会话和通话配置在聊天面板管理；被控制端不会回读对方截图分析结果。</div>
         </section>
 
         <section id="settingsGroupAdvanced" class="settings-group" data-settings-group="advanced" data-setting-risk="advanced" aria-labelledby="settingsTabAdvanced" hidden>
