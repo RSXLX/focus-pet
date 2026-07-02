@@ -10043,3 +10043,73 @@
 - 上下文：已在 HTTP `/api/friends` 分支中保存 `result.state`，Cloud 定向测试 5 项已通过。
 - 可能原因：复用纯函数测试入口时传入了内存 `state`，导致 `addFriendByCode()` 按测试模式跳过自动保存。
 - 解决状态：已解决
+
+## [2026-07-02 10:09:34 CST]
+- 问题描述：仓库搜索命令把不存在的 `.github` 路径作为 `rg` 搜索目标，命令返回错误码 2。
+- 发生位置：`rg -n ... package.json src scripts docs README.md README.zh-CN.md Dockerfile .github`
+- 上下文：准备评估 Focus Pet Cloud 的部署目标和 GitHub 托管边界，需要快速定位现有 Cloud、Release 和部署相关文件。
+- 可能原因：没有先确认仓库是否存在 `.github/` 目录。
+- 解决状态：未解决
+
+## [2026-07-02 10:09:34 CST]
+- 问题描述：系统 `python3` 环境无法导入 `modal`，返回 `ModuleNotFoundError: No module named 'modal'`。
+- 发生位置：`python3 - <<'PY' ... import modal`
+- 上下文：准备编写 Modal 部署入口前，需要确认本机 Modal SDK 能力；Modal CLI 已安装，但 SDK 位于 CLI 自带的 uv tool Python 环境。
+- 可能原因：Modal CLI 通过独立工具环境安装，未安装到系统 Python site-packages。
+- 解决状态：未解决
+
+## [2026-07-02 10:09:34 CST]
+- 问题描述：Focus Pet Cloud Modal 部署契约测试失败，`modal_app.py` 文件尚不存在。
+- 发生位置：`test/core.test.js:3090` / `npm test -- --test-name-pattern "Modal deployment target"`
+- 上下文：为“下载即用”的公网后端部署补充 TDD 契约，先确认缺少 Modal 部署入口会触发失败。
+- 可能原因：项目此前只有本地 `npm run cloud:serve`，还没有可部署到 Modal 的应用定义。
+- 解决状态：未解决
+
+## [2026-07-02 10:11:21 CST]
+- 问题描述：仓库搜索命令把不存在的 `.github` 路径作为 `rg` 搜索目标，命令返回错误码 2。
+- 发生位置：`rg -n ... package.json src scripts docs README.md README.zh-CN.md Dockerfile .github`
+- 上下文：已确认仓库当前没有 `.github/` 目录，后续搜索改为针对实际存在的路径和文件；该错误不影响部署实现。
+- 可能原因：没有先确认仓库是否存在 `.github/` 目录。
+- 解决状态：已解决
+
+## [2026-07-02 10:11:21 CST]
+- 问题描述：系统 `python3` 环境无法导入 `modal`，返回 `ModuleNotFoundError: No module named 'modal'`。
+- 发生位置：`python3 - <<'PY' ... import modal`
+- 上下文：已改用 Modal CLI 自带的 uv tool Python 环境检查 SDK 能力，并让项目 `check` 只执行 `python3 -m py_compile modal_app.py`，避免强制开发者在系统 Python 安装 Modal 包。
+- 可能原因：Modal CLI 通过独立工具环境安装，未安装到系统 Python site-packages。
+- 解决状态：已解决
+
+## [2026-07-02 10:11:21 CST]
+- 问题描述：Focus Pet Cloud Modal 部署契约测试失败，`modal_app.py` 文件尚不存在。
+- 发生位置：`test/core.test.js:3090` / `npm test -- --test-name-pattern "Modal deployment target"`
+- 上下文：已新增 `modal_app.py`、`cloud:deploy:modal` 脚本和 Modal/GitHub 托管文档，Modal 部署入口不再缺失。
+- 可能原因：项目此前只有本地 `npm run cloud:serve`，还没有可部署到 Modal 的应用定义。
+- 解决状态：已解决
+
+## [2026-07-02 10:11:21 CST]
+- 问题描述：Focus Pet Cloud Modal 部署契约测试失败，`@modal.web_server` 使用端口常量而不是测试要求的字面量 `47821`。
+- 发生位置：`modal_app.py` / `test/core.test.js:3098`
+- 上下文：Modal 配置已使用固定公网服务端口，测试要求部署入口清晰暴露 `@modal.web_server(47821, ...)`。
+- 可能原因：实现时为了复用端口值使用了 `CLOUD_PORT` 常量，但文档契约测试按字面配置匹配。
+- 解决状态：已解决
+
+## [2026-07-02 10:11:21 CST]
+- 问题描述：release preflight 错误日志 gate 在测试中失败，因为新增错误记录仍处于未解决状态。
+- 发生位置：`test/core.test.js:5354` / `runErrorLogCheck(PROJECT_ROOT)`
+- 上下文：已按追加写入规则为本轮新增问题追加对应的已解决记录，保持错误日志可追溯且无开放未解决项。
+- 可能原因：TDD 红灯和环境检查错误刚记录到 `docs/errorThing.md`，还没有追加闭环记录。
+- 解决状态：已解决
+
+## [2026-07-02 10:15:07 CST]
+- 问题描述：使用 Modal CLI 查看 Volume 时把容器挂载路径 `/data/focus-pet-cloud` 当作 Volume 内远端路径，命令先返回 `No such file or directory`。
+- 发生位置：`modal volume ls focus-pet-cloud-data /data/focus-pet-cloud`
+- 上下文：清理部署烟测产生的测试用户时，需要定位 `cloud-state.json`；Modal CLI 需要使用 Volume 内相对路径 `focus-pet-cloud`。
+- 可能原因：混淆了容器内挂载路径和 Modal Volume 的远端文件路径。
+- 解决状态：已解决
+
+## [2026-07-02 10:15:07 CST]
+- 问题描述：Modal App rollover 后首次请求 `/healthz` 返回 HTTP 500。
+- 发生位置：`curl -fsS https://reecewong520--focus-pet-cloud-cloud.modal.run/healthz`
+- 上下文：删除烟测状态文件并重建容器后做健康检查；随后日志显示 Node 服务已监听，状态文件被重新创建，连续复查 `/healthz` 返回 200 且 `users` 为 0。
+- 可能原因：Modal 重建容器期间首次请求命中冷启动或 Web Server 代理短暂不可用窗口。
+- 解决状态：已解决

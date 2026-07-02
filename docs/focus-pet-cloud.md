@@ -124,3 +124,61 @@ wss://cloud.example.com?token=<authToken>&deviceId=<deviceId>
 - 必须配置 TURN；只靠 STUN 在复杂网络下会有大量连接失败。
 - auth token 需要通过 HTTPS 传输，不要写入公开日志。
 - `FOCUS_PET_CLOUD_DATA_DIR` 应挂载持久化磁盘。
+
+## Modal 托管部署
+
+当前仓库提供 `modal_app.py`，用于把 Focus Pet Cloud 部署成一个 Modal Web Server。Modal 负责提供公网 HTTPS/WSS 入口，Node 服务仍然监听容器内 `47821` 端口。
+
+```bash
+modal deploy modal_app.py
+```
+
+也可以使用 npm 脚本：
+
+```bash
+npm run cloud:deploy:modal
+```
+
+部署配置：
+
+- App 名称：`focus-pet-cloud`
+- 容器镜像：`node:22-slim`
+- 对外端口：`47821`
+- 持久化目录：`/data/focus-pet-cloud`
+- Modal Volume：`focus-pet-cloud-data`
+- 保温策略：`min_containers=1`
+- 扩容策略：`max_containers=1`
+
+这里刻意限制为单容器。当前 Cloud 后端使用本地 JSON 文件保存用户、好友和审计数据，同时 WebSocket 连接也在当前进程内存里维护。如果直接横向扩容，两个用户可能被分配到不同容器，实时信令会断开；多个容器同时写同一个 JSON 文件也会有覆盖风险。后续如果需要承载更多用户，应把用户/好友/审计迁移到 Postgres，把 WebSocket 在线状态和信令路由迁移到 Redis、NATS 或托管实时消息服务。
+
+TURN 需要通过环境变量配置，例如：
+
+```bash
+modal secret create focus-pet-cloud-turn \
+  FOCUS_PET_CLOUD_RTC_ICE_SERVERS='[{"urls":["turn:turn.example.com:3478?transport=tcp"],"username":"user","credential":"password"}]'
+```
+
+如果接入 Modal Secret，需要在 `modal_app.py` 的 `@app.function(...)` 中增加 `secrets=[modal.Secret.from_name("focus-pet-cloud-turn")]`。
+
+## GitHub 托管边界
+
+GitHub 适合继续承担三件事：
+
+- 公开源码仓库；
+- GitHub Releases 下载 DMG/ZIP；
+- GitHub Pages 托管官网、下载页或静态文档。
+
+GitHub Pages 不能承载 Node/WebSocket 后端，也不能作为 Focus Pet Cloud 的语音/视频信令服务。它可以承载静态 HTML、CSS 和 JavaScript，但不能长期运行 `npm run cloud:serve` 这样的 Node 进程。GitHub Actions 适合 CI/CD 和自动打包，不适合作为常驻生产后端；GitHub Codespaces 是开发环境，也不适合给普通用户当稳定公网服务。
+
+## 用户下载即用路径
+
+要让用户“下载好就可以用上”，推荐拆成两个发布面：
+
+1. GitHub Release 提供桌面端 DMG/ZIP。
+2. Modal 提供统一 Focus Pet Cloud 后端。
+3. 桌面端内置默认 Cloud URL，首次启动自动生成本机 `deviceId`。
+4. 桌面端调用 `POST /api/users` 注册，保存 `userId`、`friendCode` 和设备绑定 `authToken` 到本机。
+5. 用户只需要把 `friendCode` 发给对方，双方即可建立好友关系。
+6. 发起语音/视频时，桌面端通过 Cloud WebSocket 交换 WebRTC offer、answer 和 ICE candidate。
+
+当前仓库已经具备 Cloud 后端、Modal 部署入口、稳定 ID、好友码、认证 WebSocket 信令和 WebRTC TURN 配置接口。桌面端还需要继续补默认 Cloud URL、首次启动自动注册、账号面板和好友码输入流程，才能做到真正面向普通用户的零配置体验。

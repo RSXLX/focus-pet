@@ -3085,6 +3085,25 @@ test('Focus Pet Cloud exposes a Node-only backend entrypoint for public deployme
   assert.match(source, /saveState\(result\.state\)/);
 });
 
+test('Focus Pet Cloud provides a Modal deployment target for zero-setup users', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  const modalApp = fs.readFileSync(path.join(PROJECT_ROOT, 'modal_app.py'), 'utf8');
+  const docs = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'focus-pet-cloud.md'), 'utf8');
+
+  assert.equal(packageJson.scripts['cloud:deploy:modal'], 'modal deploy modal_app.py');
+  assert.match(packageJson.scripts.check, /python3 -m py_compile modal_app\.py/);
+  assert.match(modalApp, /modal\.App\("focus-pet-cloud"\)/);
+  assert.match(modalApp, /modal\.Image\.from_registry\("node:22-slim", add_python="3\.12"\)/);
+  assert.match(modalApp, /modal\.Volume\.from_name\("focus-pet-cloud-data", create_if_missing=True\)/);
+  assert.match(modalApp, /@modal\.web_server\(47821/);
+  assert.match(modalApp, /max_containers=1/);
+  assert.match(modalApp, /min_containers=1/);
+  assert.match(modalApp, /FOCUS_PET_CLOUD_DATA_DIR/);
+  assert.match(modalApp, /npm", "run", "cloud:serve"/);
+  assert.match(docs, /modal deploy modal_app\.py/);
+  assert.match(docs, /GitHub Pages[\s\S]*不能承载 Node\/WebSocket 后端/);
+});
+
 test('remote social client supports invite onboarding, messaging, and WebRTC calls', () => {
   const chatService = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'chat-service.js'), 'utf8');
 

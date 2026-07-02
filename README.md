@@ -103,7 +103,10 @@ npm run check
 npm run verify:pet-render
 npm run diagnostics
 npm run cloud:serve
+npm run cloud:deploy:modal
 ```
+
+`npm run cloud:deploy:modal` deploys the optional Focus Pet Cloud backend to Modal for public HTTPS/WSS signaling. GitHub Pages can host a static website or download page, but it cannot run the Node/WebSocket backend used for realtime voice/video signaling. See [Focus Pet Cloud](docs/focus-pet-cloud.md).
 
 ## Release And Diagnostics Gates
 

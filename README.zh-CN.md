@@ -103,7 +103,10 @@ npm run check
 npm run verify:pet-render
 npm run diagnostics
 npm run cloud:serve
+npm run cloud:deploy:modal
 ```
+
+`npm run cloud:deploy:modal` 会把可选 Focus Pet Cloud 后端部署到 Modal，提供公网 HTTPS/WSS 信令入口。GitHub Pages 适合托管静态官网或下载页，但不能运行实时语音/视频所需的 Node/WebSocket 后端。见 [Focus Pet Cloud](docs/focus-pet-cloud.md)。
 
 ## 发布与诊断 Gate
 
