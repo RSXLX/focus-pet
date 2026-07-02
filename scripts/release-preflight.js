@@ -104,7 +104,7 @@ const INCOMPLETE_ACCEPTANCE_STATUS_PATTERN = /(?:[：:\-—–（(]\s*|\s)(?:未
 const PACKAGE_SCRIPT_REQUIREMENTS = [
   { script: 'package:mac', command: 'node scripts/package-macos.js', file: 'scripts/package-macos.js' },
   { script: 'package:win', command: 'node scripts/package-windows.js', file: 'scripts/package-windows.js' },
-  { script: 'package:mac:remote-client', command: 'node scripts/package-remote-client-macos.js', file: 'scripts/package-remote-client-macos.js' },
+  { script: 'package:mac:controlled', command: 'node scripts/package-remote-client-macos.js', file: 'scripts/package-remote-client-macos.js' },
   { script: 'sign:mac', command: 'node scripts/sign-macos.js', file: 'scripts/sign-macos.js' },
   { script: 'notarize:mac', command: 'node scripts/notarize-macos.js', file: 'scripts/notarize-macos.js' },
   { script: 'verify:mac', command: 'node scripts/verify-macos.js', file: 'scripts/verify-macos.js' },
@@ -1203,14 +1203,14 @@ function buildReleasePreflightChecklist(options = {}) {
       note: 'macOS 发布前生成本机 app 产物。'
     },
     {
-      id: 'mac-remote-client-package',
-      title: 'macOS 远端客户端打包',
-      command: 'npm run package:mac:remote-client',
+      id: 'mac-controlled-client-release',
+      title: 'macOS 被控制端发布资产',
+      command: 'npm run release:mac:controlled',
       runGroup: 'package',
       platform: 'darwin',
       manual: true,
       required: false,
-      note: '部署 HTTPS 远端客户端后设置 REMOTE_CLIENT_URL 再执行；条件项，不随 package 自动组运行。'
+      note: '部署 HTTPS /client 被控制端入口后设置 REMOTE_CLIENT_URL 再执行，生成 DMG/ZIP/manifest；条件项，不随 package 自动组运行。'
     },
     {
       id: 'mac-signing',

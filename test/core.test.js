@@ -3070,6 +3070,23 @@ test('Focus Pet Cloud exposes a Node-only backend entrypoint for public deployme
   assert.match(source, /saveState\(result\.state\)/);
 });
 
+test('Focus Pet Cloud serves a public controlled client for zero-setup calls', () => {
+  const source = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'cloud-service.js'), 'utf8');
+
+  assert.match(source, /function cloudClientHtml\(/);
+  assert.match(source, /url\.pathname === '\/client'/);
+  assert.match(source, /method:'POST',\s*headers:\{'content-type':'application\/json'\}/);
+  assert.match(source, /id="friendCode"/);
+  assert.match(source, /id="addFriendCode"/);
+  assert.match(source, /id="callAudio"/);
+  assert.match(source, /id="callVideo"/);
+  assert.match(source, /RTCPeerConnection/);
+  assert.match(source, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(source, /new WebSocket/);
+  assert.doesNotMatch(source, /Focus Pet Controlled/);
+  assert.doesNotMatch(source, /id="activity"|id="activityImage"|id="activityLog"|对方正在做什么|截图分析面板/);
+});
+
 test('Focus Pet Cloud provides a Modal deployment target for zero-setup users', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
   const modalApp = fs.readFileSync(path.join(PROJECT_ROOT, 'modal_app.py'), 'utf8');
@@ -4083,7 +4100,7 @@ test('release preflight checklist documents required gates and supports fast loc
     'package-scripts',
     'chat-backend-deploy',
     'mac-package',
-    'mac-remote-client-package',
+    'mac-controlled-client-release',
     'mac-signing',
     'mac-notarization',
     'windows-package',
@@ -4115,10 +4132,10 @@ test('release preflight checklist documents required gates and supports fast loc
   assert.equal(checklist.find(item => item.id === 'chat-backend-deploy').command, 'node scripts/release-preflight.js --check chat-backend-deploy');
   assert.equal(checklist.find(item => item.id === 'chat-backend-deploy').runGroup, 'fast');
   assert.equal(checklist.find(item => item.id === 'mac-package').platform, 'darwin');
-  assert.equal(checklist.find(item => item.id === 'mac-remote-client-package').command, 'npm run package:mac:remote-client');
-  assert.equal(checklist.find(item => item.id === 'mac-remote-client-package').platform, 'darwin');
-  assert.equal(checklist.find(item => item.id === 'mac-remote-client-package').runGroup, 'package');
-  assert.equal(checklist.find(item => item.id === 'mac-remote-client-package').manual, true);
+  assert.equal(checklist.find(item => item.id === 'mac-controlled-client-release').command, 'npm run release:mac:controlled');
+  assert.equal(checklist.find(item => item.id === 'mac-controlled-client-release').platform, 'darwin');
+  assert.equal(checklist.find(item => item.id === 'mac-controlled-client-release').runGroup, 'package');
+  assert.equal(checklist.find(item => item.id === 'mac-controlled-client-release').manual, true);
   assert.equal(checklist.find(item => item.id === 'mac-notarization').command, 'npm run notarize:mac && npm run verify:mac');
   assert.equal(checklist.find(item => item.id === 'mac-notarization').platform, 'darwin');
   assert.equal(checklist.find(item => item.id === 'mac-notarization').runGroup, 'package');
@@ -4574,7 +4591,7 @@ test('release preflight checklist documents required gates and supports fast loc
   assert.deepEqual(packageScripts.checkedScripts, [
     'package:mac',
     'package:win',
-    'package:mac:remote-client',
+    'package:mac:controlled',
     'sign:mac',
     'notarize:mac',
     'verify:mac',
@@ -5321,7 +5338,7 @@ test('release preflight checklist documents required gates and supports fast loc
       ].join(' && '),
       'package:mac': 'node scripts/package-macos.js',
       'package:win': 'node scripts/package-windows.js',
-      'package:mac:remote-client': 'node scripts/package-remote-client-macos.js',
+      'package:mac:controlled': 'node scripts/package-remote-client-macos.js',
       'sign:mac': 'node scripts/sign-macos.js',
       'notarize:mac': 'node scripts/notarize-macos.js',
       'verify:mac': 'node scripts/verify-macos.js',
@@ -6632,6 +6649,10 @@ test('mac release assets script plans dmg zip and checksum manifest names', () =
   const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
   const releaseScriptPath = path.join(PROJECT_ROOT, 'scripts', 'create-mac-release-assets.js');
   assert.equal(packageJson.scripts['release:mac'], 'node scripts/create-mac-release-assets.js');
+  assert.equal(
+    packageJson.scripts['release:mac:controlled'],
+    'APP_NAME="Focus Pet" BUNDLE_ID=dev.focus-pet.app FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:controlled node scripts/create-mac-release-assets.js'
+  );
   assert.match(packageJson.scripts.check, /node --check scripts\/create-mac-release-assets\.js/);
 
   const { buildReleaseAssetPlan } = require(releaseScriptPath);
@@ -6648,6 +6669,8 @@ test('mac release assets script plans dmg zip and checksum manifest names', () =
   assert.equal(path.basename(plan.dmgPath), 'Focus-Pet-2.3.4-mac-arm64.dmg');
   assert.equal(path.basename(plan.manifestPath), 'Focus-Pet-2.3.4-mac-arm64-manifest.json');
   assert.equal(path.basename(plan.stagedApplicationsLink), 'Applications');
+
+  assert.doesNotMatch(packageJson.scripts['release:mac:controlled'], /Controlled/);
 });
 
 test('mac release assets script signs the app before archiving', () => {
@@ -6655,6 +6678,8 @@ test('mac release assets script signs the app before archiving', () => {
 
   assert.match(releaseScript, /function signAppForRelease\(plan/);
   assert.match(releaseScript, /process\.env\.MAC_CODESIGN_IDENTITY \|\| '-'/);
+  assert.match(releaseScript, /FOCUS_PET_MAC_PACKAGE_SCRIPT/);
+  assert.match(releaseScript, /resolvePackageScript/);
   assert.match(releaseScript, /codesign', \[[\s\S]*'--force'[\s\S]*'--deep'[\s\S]*'--sign'/);
   assert.match(releaseScript, /signAppForRelease\(plan\)[\s\S]*createZip\(plan\)/);
 });

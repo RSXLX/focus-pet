@@ -29,9 +29,9 @@ Latest release: [v1.0.0](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0)
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| macOS Apple Silicon | [DMG](https://github.com/RSXLX/focus-pet/releases/download/v1.0.0/Focus-Pet-1.0.0-mac-arm64.dmg) | Recommended for normal installation. |
-| macOS Apple Silicon | [ZIP](https://github.com/RSXLX/focus-pet/releases/download/v1.0.0/Focus-Pet-1.0.0-mac-arm64.zip) | Direct app bundle archive. |
-| Checksums | [manifest.json](https://github.com/RSXLX/focus-pet/releases/download/v1.0.0/Focus-Pet-1.0.0-mac-arm64-manifest.json) | SHA-256 and file sizes. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0) | Download the DMG for normal installation. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0) | ZIP archive is also available. |
+| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0) | SHA-256 manifest is included. |
 
 macOS note: the current public build is ad-hoc signed but not Apple-notarized. On first launch, macOS Gatekeeper may require manual approval in System Settings or via right-click Open.
 
@@ -43,7 +43,7 @@ macOS note: the current public build is ad-hoc signed but not Apple-notarized. O
 - Pet feedback: mood, energy, bond, care actions, full-body animations, and chat GIF sharing.
 - Daily review: local 24-hour review with focus minutes, drift windows, task friction, and next actions.
 - Optional screen monitor: disabled by default; sends low-detail screenshots only when explicitly enabled.
-- Optional local social chat: controller-side invite links, controlled-side chat/calls, media messages, pet GIFs, and WebRTC signaling.
+- Optional local social chat: invite links, web client, media messages, pet GIFs, and WebRTC signaling.
 - Optional Focus Pet Cloud backend: stable user IDs, friend codes, authenticated WebSocket signaling, and one-to-one WebRTC voice/video calls.
 - Low-memory runtime: optional chat, diagnostics, screen monitor, LLM self-check, WebSocket, and GIF previews load on demand.
 
@@ -136,14 +136,6 @@ macOS DMG, ZIP, and checksum manifest:
 ```bash
 npm run release:mac
 ```
-
-Public distribution should use the controlled client package after deploying an HTTPS `/client` endpoint:
-
-```bash
-REMOTE_CLIENT_URL="https://your-domain.example/client" npm run package:mac:controlled
-```
-
-The full desktop app is the local controller/developer build and should not be the ordinary public download when using the controller/controlled model.
 
 Developer ID signing and notarization are optional but recommended for public distribution:
 

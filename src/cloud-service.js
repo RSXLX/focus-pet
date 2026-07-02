@@ -416,6 +416,95 @@ function jsonResponse(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+function htmlResponse(res, status, body) {
+  res.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-security-policy': "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self' blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+  });
+  res.end(body);
+}
+
+function cloudClientHtml() {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Focus Pet</title>
+<style>
+:root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f8fb;color:#15171c}
+body{margin:0;min-height:100vh;background:#f7f8fb;color:#15171c}
+button,input,select{font:inherit}
+.shell{max-width:1120px;margin:0 auto;padding:28px;display:grid;gap:18px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid #d9dde6;padding-bottom:14px}
+.brand{font-size:22px;font-weight:700}
+.status{color:#667085;font-size:13px}
+.grid{display:grid;grid-template-columns:280px 1fr;gap:18px;align-items:start}
+.panel{background:#fff;border:1px solid #d9dde6;border-radius:8px;padding:16px;box-shadow:0 8px 24px rgba(20,28,45,.06)}
+.stack{display:grid;gap:12px}
+.row{display:flex;gap:10px;align-items:center}
+.row>*{min-width:0}
+input,select{width:100%;box-sizing:border-box;border:1px solid #c7cfdd;border-radius:6px;padding:10px 11px;background:#fff;color:#15171c}
+button{border:0;border-radius:6px;padding:10px 12px;background:#246bfe;color:#fff;cursor:pointer;white-space:nowrap}
+button.secondary{background:#edf1f7;color:#1f2937}
+button.danger{background:#d92d20}
+button:disabled{opacity:.45;cursor:not-allowed}
+.identity{display:grid;gap:6px;font-size:13px}
+.identity b{font-size:20px;letter-spacing:.02em}
+.friends{display:grid;gap:8px}
+.friend{display:flex;justify-content:space-between;gap:10px;border:1px solid #e3e8f2;border-radius:6px;padding:10px;background:#fbfcff}
+.friend span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.friend em{font-style:normal;color:#667085;font-size:12px}
+.stage{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+video{width:100%;aspect-ratio:16/10;background:#111827;border-radius:8px;object-fit:cover}
+.hidden{display:none!important}
+@media(max-width:760px){.shell{padding:18px}.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}.stage{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main class="shell">
+  <div class="top"><div class="brand">Focus Pet</div><div id="status" class="status">未连接</div></div>
+  <section id="registerPanel" class="panel stack">
+    <input id="displayName" maxlength="40" placeholder="昵称">
+    <button id="registerButton">创建我的 ID</button>
+  </section>
+  <section id="appPanel" class="grid hidden">
+    <aside class="panel stack">
+      <div class="identity"><span>我的好友码</span><b id="friendCode">-</b><span id="selfName">-</span></div>
+      <div class="row"><input id="addFriendCode" maxlength="20" placeholder="输入好友码"><button id="addFriendButton">添加</button></div>
+      <div id="friends" class="friends"></div>
+    </aside>
+    <section class="panel stack">
+      <div class="row"><select id="friendSelect" aria-label="好友"></select></div>
+      <div class="row"><button id="callAudio">语音</button><button id="callVideo">视频</button><button id="callEnd" class="danger">挂断</button><button id="refreshButton" class="secondary">刷新</button></div>
+      <div class="stage"><video id="localVideo" muted autoplay playsinline></video><video id="remoteVideo" autoplay playsinline></video></div>
+      <div id="callStatus" class="status">未通话</div>
+    </section>
+  </section>
+</main>
+<script>
+const TOKEN_KEY='focusPetCloudAuthToken';const DEVICE_KEY='focusPetCloudDeviceId';let token=localStorage.getItem(TOKEN_KEY)||'';let state={self:null,friends:[],iceServers:[]};let ws;let pc;let localStream;let currentCall=null;
+const el=id=>document.getElementById(id);function deviceId(){let value=localStorage.getItem(DEVICE_KEY);if(!value){value='device-'+Date.now()+'-'+Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2);localStorage.setItem(DEVICE_KEY,value)}return value}
+function setStatus(text){el('status').textContent=text}function authHeaders(extra={}){return{...extra,authorization:'Bearer '+token,'x-focus-pet-device-id':deviceId()}}
+async function api(path,options={}){const headers=options.auth===false?options.headers||{}:authHeaders(options.headers||{});const res=await fetch(path,{...options,headers});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.error||res.statusText);return data}
+function render(){const signedIn=Boolean(token&&state.self);el('registerPanel').classList.toggle('hidden',signedIn);el('appPanel').classList.toggle('hidden',!signedIn);if(!signedIn)return;el('friendCode').textContent=state.self.friendCode||'-';el('selfName').textContent=state.self.displayName||state.self.id||'-';const friends=state.friends||[];el('friends').innerHTML='';el('friendSelect').innerHTML='';for(const friend of friends){const option=document.createElement('option');option.value=friend.id;option.textContent=friend.displayName+(friend.online?' · 在线':' · 离线');el('friendSelect').appendChild(option);const row=document.createElement('div');row.className='friend';const name=document.createElement('span');name.textContent=friend.displayName;const online=document.createElement('em');online.textContent=friend.online?'在线':'离线';row.append(name,online);el('friends').appendChild(row)}}
+async function register(){const displayName=el('displayName').value.trim()||'Focus Pet User';const data=await fetch('/api/users',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({displayName,deviceId:deviceId()})}).then(res=>res.json());token=data.authToken||'';if(!token)throw new Error('注册失败');localStorage.setItem(TOKEN_KEY,token);state={self:data.user,friends:[],iceServers:data.iceServers||[]};render();await refresh();connect()}
+async function refresh(){if(!token){render();return}state=await api('/api/me');render();connect()}
+async function addFriend(){const friendCode=el('addFriendCode').value.trim();if(!friendCode)return;await api('/api/friends',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({friendCode})});el('addFriendCode').value='';await refresh()}
+function selectedFriend(){return el('friendSelect').value||''}function wsUrl(){const url=new URL(location.href);url.protocol=url.protocol==='https:'?'wss:':'ws:';url.search='?token='+encodeURIComponent(token)+'&deviceId='+encodeURIComponent(deviceId());return url.toString()}
+function connect(){if(!token||ws&&ws.readyState<=1)return;ws=new WebSocket(wsUrl());ws.onopen=()=>setStatus('已连接');ws.onclose=()=>setStatus('已断开');ws.onmessage=event=>{const data=JSON.parse(event.data);handleSignal(data.event,data.payload||{})}}
+function send(type,payload={}){if(!ws||ws.readyState!==1)return;ws.send(JSON.stringify({type,to:payload.to||selectedFriend(),callId:payload.callId||currentCall?.callId,mode:payload.mode||currentCall?.mode||'audio',...payload}))}
+async function ensurePeer(mode){pc=new RTCPeerConnection({iceServers:state.iceServers||[]});pc.onicecandidate=event=>{if(event.candidate)send('rtc-ice',{candidate:event.candidate})};pc.ontrack=event=>{el('remoteVideo').srcObject=event.streams[0]};localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:mode==='video'});el('localVideo').srcObject=localStream;for(const track of localStream.getTracks())pc.addTrack(track,localStream)}
+async function startCall(mode){const to=selectedFriend();if(!to)return;currentCall={to,callId:'call-'+Date.now()+'-'+Math.random().toString(36).slice(2),mode};await ensurePeer(mode);send('call-invite',{to,callId:currentCall.callId,mode});const offer=await pc.createOffer();await pc.setLocalDescription(offer);send('rtc-offer',{to,callId:currentCall.callId,mode,sdp:offer});el('callStatus').textContent='呼叫中'}
+async function answerCall(payload){currentCall={to:payload.from,callId:payload.callId,mode:payload.mode||'audio'};await ensurePeer(currentCall.mode);await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));const answer=await pc.createAnswer();await pc.setLocalDescription(answer);send('rtc-answer',{to:payload.from,callId:payload.callId,mode:currentCall.mode,sdp:answer});el('callStatus').textContent='通话中'}
+async function handleSignal(event,payload){if(event==='state'){state=payload;render();return}if(event==='call-invite'){currentCall={to:payload.from,callId:payload.callId,mode:payload.mode};el('callStatus').textContent='来电'}if(event==='rtc-offer')return answerCall(payload);if(event==='rtc-answer'&&pc){await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));el('callStatus').textContent='通话中'}if(event==='rtc-ice'&&pc&&payload.candidate)await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));if(event==='call-end'||event==='call-cancel'||event==='call-unavailable')endCall(false)}
+function endCall(notify=true){if(notify&&currentCall)send('call-end',{to:currentCall.to,callId:currentCall.callId,mode:currentCall.mode});if(pc)pc.close();pc=null;if(localStream)localStream.getTracks().forEach(track=>track.stop());localStream=null;el('localVideo').srcObject=null;el('remoteVideo').srcObject=null;currentCall=null;el('callStatus').textContent='未通话'}
+el('registerButton').onclick=()=>register().catch(error=>setStatus(error.message));el('addFriendButton').onclick=()=>addFriend().catch(error=>setStatus(error.message));el('refreshButton').onclick=()=>refresh().catch(error=>setStatus(error.message));el('callAudio').onclick=()=>startCall('audio').catch(error=>setStatus(error.message));el('callVideo').onclick=()=>startCall('video').catch(error=>setStatus(error.message));el('callEnd').onclick=()=>endCall(true);refresh().catch(()=>{token='';localStorage.removeItem(TOKEN_KEY);render()});
+</script>
+</body>
+</html>`;
+}
+
 function requestPublicBaseUrl(req = {}) {
   const configured = String(process.env.FOCUS_PET_CLOUD_PUBLIC_URL || '').trim().replace(/\/$/, '');
   if (/^https?:\/\//i.test(configured)) return configured;
@@ -461,6 +550,7 @@ function sendToUser(userId, event, payload) {
 async function handleApi(req, res) {
   if (req.method === 'OPTIONS') return jsonResponse(res, 204, {});
   const url = new URL(req.url || '/', requestPublicBaseUrl(req));
+  if (req.method === 'GET' && url.pathname === '/client') return htmlResponse(res, 200, cloudClientHtml());
   if (req.method === 'GET' && url.pathname === '/healthz') return jsonResponse(res, 200, healthState());
   if (req.method === 'POST' && url.pathname === '/api/users') {
     const body = await parseJson(req);

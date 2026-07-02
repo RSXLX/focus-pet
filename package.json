@@ -20,6 +20,7 @@
     "pet:generate-animations": "node scripts/run-pet-animation-generator.js",
     "package:mac": "node scripts/package-macos.js",
     "release:mac": "node scripts/create-mac-release-assets.js",
+    "release:mac:controlled": "APP_NAME=\"Focus Pet\" BUNDLE_ID=dev.focus-pet.app FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:controlled node scripts/create-mac-release-assets.js",
     "package:win": "node scripts/package-windows.js",
     "package:mac:controlled": "node scripts/package-remote-client-macos.js",
     "package:mac:remote-client": "node scripts/package-remote-client-macos.js",

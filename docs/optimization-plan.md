@@ -588,7 +588,7 @@
 - Peer 的 `messages[*].activity` 恒为 `null`，避免通过消息列表绕过活动边界。
 - Peer 即使提交自己的活动快照，也不会从服务端回读该快照；该数据只进入 owner 本机视图。
 - 被控制端远端客户端已移除“对方正在做什么”/截图分析面板。
-- 公开发布脚本新增 `npm run package:mac:controlled`，复用 HTTPS 远端客户端打包器；完整桌面端保留为控制端/开发端。
+- 公开发布脚本新增 `npm run release:mac:controlled`，生成被控制端 DMG/ZIP/manifest；完整桌面端保留为控制端/开发端。
 - 已补单元测试覆盖默认最小共享、四档共享字段边界、设置归一化和设置页接线。
 
 当前 5.3 验收状态：
@@ -702,7 +702,7 @@
 - 已继续执行阶段 5 的一部分：`error-log` 从人工复核升级为 fast 自动 gate，会检查 `docs/errorThing.md` 存在、跳过顶部 `## [时间]` 模板、校验全部真实记录字段完整、确认最新状态为已解决，并扫描是否存在未被后续同问题已解决记录关闭的开放未解决项；QA 已通过时的 Electron/Chromium GPU 退出噪声作为非阻断观察项处理，检查输出只返回行号、字段名和时间，不回显错误正文。
 - 已继续执行阶段 5 的一部分：`--run full` 新增 `screen-pipeline` gate，会在桌面渲染 QA 后执行 `npm run test:screen-pipeline`，用于发布前确认手动屏幕分析、结构化 LLM 输出和复盘 LLM 串联。
 - 已继续执行阶段 5 的一部分：`--run package` 的 macOS package 清单显式包含 `mac-notarization`，在本地打包、签名校验之外列出 `npm run notarize:mac && npm run verify:mac`，避免发布流程漏掉已有公证脚本，并在 staple 后再次执行 Gatekeeper/签名验证。
-- 已继续执行阶段 5 的一部分：发布前清单新增 `mac-remote-client-package` 人工条件项，显式列出 `npm run package:mac:remote-client`；该步骤依赖部署后的 HTTPS `REMOTE_CLIENT_URL`，因此只在清单展示并由发布执行者单独运行，不随 `--run package` 自动执行。
+- 已继续执行阶段 5 的一部分：发布前清单使用 `mac-controlled-client-release` 人工条件项，显式列出 `npm run release:mac:controlled`；该步骤依赖部署后的 HTTPS `/client` 被控制端入口和 `REMOTE_CLIENT_URL`，因此只在清单展示并由发布执行者单独运行，不随 `--run package` 自动执行。`package:mac:controlled` 可单独生成 `.app`，`package:mac:remote-client` 仅作为兼容别名保留。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包的 `REMOTE_CLIENT_URL` 校验收紧为 HTTPS 且路径必须是 `/client` 或 `/client/...`，避免 `/client-...` 这类相似路径被误打包；校验函数已可导入测试。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包内的媒体权限校验从字符串前缀匹配改为解析请求 URL origin 后与 `REMOTE_CLIENT_URL` 精确同源比较，避免相似域名获得麦克风/摄像头权限。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包内的外链和导航边界已收紧，内嵌窗口只保留同源 `/client` 页面，跳出该范围的 http/https 导航交给系统浏览器，非 http/https 外链不会调用 `shell.openExternal()`。

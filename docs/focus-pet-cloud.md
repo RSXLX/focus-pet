@@ -39,6 +39,18 @@ FOCUS_PET_CLOUD_RTC_ICE_SERVERS='[
 
 ## HTTP API
 
+### `GET /client`
+
+公开被控制端客户端入口，不需要预置 token。用户打开后可以创建自己的稳定 ID、查看好友码、添加好友码，并通过 Cloud WebSocket 建立一对一 WebRTC 语音/视频通话。
+
+公开 macOS 下载包应使用该入口构建：
+
+```bash
+REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:controlled
+```
+
+该客户端只包含账号、好友和通话能力，不展示对方活动快照或截图分析结果。
+
 ### `POST /api/users`
 
 注册一个用户和当前设备。
@@ -174,11 +186,11 @@ GitHub Pages 不能承载 Node/WebSocket 后端，也不能作为 Focus Pet Clou
 
 要让用户“下载好就可以用上”，推荐拆成两个发布面：
 
-1. GitHub Release 提供桌面端 DMG/ZIP。
+1. GitHub Release 提供被控制端 DMG/ZIP，构建命令为 `REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:controlled`。
 2. Modal 提供统一 Focus Pet Cloud 后端。
 3. 桌面端内置默认 Cloud URL，首次启动自动生成本机 `deviceId`。
 4. 桌面端调用 `POST /api/users` 注册，保存 `userId`、`friendCode` 和设备绑定 `authToken` 到本机。
 5. 用户只需要把 `friendCode` 发给对方，双方即可建立好友关系。
 6. 发起语音/视频时，桌面端通过 Cloud WebSocket 交换 WebRTC offer、answer 和 ICE candidate。
 
-当前仓库已经具备 Cloud 后端、Modal 部署入口、稳定 ID、好友码、认证 WebSocket 信令和 WebRTC TURN 配置接口。桌面端还需要继续补默认 Cloud URL、首次启动自动注册、账号面板和好友码输入流程，才能做到真正面向普通用户的零配置体验。
+当前仓库已经具备 Cloud 后端、Modal 部署入口、公开 `/client` 被控制端入口、稳定 ID、好友码、认证 WebSocket 信令、WebRTC TURN 配置接口，以及被控制端 macOS DMG/ZIP release 脚本。完整桌面端保留为本地控制端/开发端。

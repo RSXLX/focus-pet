@@ -10127,3 +10127,73 @@
 - 上下文：已将 peer 出站 `activities`、`activityLog`、WebSocket `activity` 和 `messages[*].activity` 全部阻断，并移除被控制端活动面板；社交定向测试已通过。
 - 可能原因：此前的社交共享设计允许 peer 在 `status`、`summary`、`screen-summary` 档位接收降级活动摘要，并在远端客户端渲染活动面板。
 - 解决状态：已解决
+
+## [2026-07-02 10:27:58 CST]
+- 问题描述：发布预检清单仍使用旧的 `mac-remote-client-package` / `npm run package:mac:remote-client`，未体现公开分发应使用被控制端包。
+- 发生位置：`scripts/release-preflight.js buildReleasePreflightChecklist`；`node --test --test-name-pattern "release preflight checklist|optimization-plan|package scripts" test/core.test.js`
+- 上下文：新增测试要求发布清单使用 `mac-controlled-client-package` 和 `npm run package:mac:controlled`，当前实现仍返回旧 ID 和旧命令。
+- 可能原因：此前远端客户端打包脚本语义尚未区分控制端/被控制端，发布清单沿用 remote-client 命名。
+- 解决状态：未解决
+
+## [2026-07-02 10:28:31 CST]
+- 问题描述：发布预检清单仍使用旧的 `mac-remote-client-package` / `npm run package:mac:remote-client`，未体现公开分发应使用被控制端包。
+- 发生位置：`scripts/release-preflight.js buildReleasePreflightChecklist`；`node --test --test-name-pattern "release preflight checklist|optimization-plan|package scripts" test/core.test.js`
+- 上下文：发布清单已改为 `mac-controlled-client-package`，命令为 `npm run package:mac:controlled`；package scripts gate 也改为检查 `package:mac:controlled`。
+- 可能原因：此前远端客户端打包脚本语义尚未区分控制端/被控制端，发布清单沿用 remote-client 命名。
+- 解决状态：已解决
+
+## [2026-07-02 10:29:26 CST]
+- 问题描述：mac release 产物脚本缺少 `release:mac:controlled`，公开分发无法直接生成被控制端 DMG/ZIP/manifest。
+- 发生位置：`package.json scripts`；`scripts/create-mac-release-assets.js`；`node --test --test-name-pattern "mac release assets script" test/core.test.js`
+- 上下文：新增测试要求 `release:mac:controlled` 存在，并要求 release 脚本可通过 `FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:controlled` 调用被控制端打包器。
+- 可能原因：此前 release 产物流程只面向完整桌面端，远端/被控制端脚本只生成 `.app`。
+- 解决状态：未解决
+
+## [2026-07-02 10:30:43 CST]
+- 问题描述：mac release 产物脚本缺少 `release:mac:controlled`，公开分发无法直接生成被控制端 DMG/ZIP/manifest。
+- 发生位置：`package.json scripts`；`scripts/create-mac-release-assets.js`；`node --test --test-name-pattern "mac release assets script" test/core.test.js`
+- 上下文：已新增 `release:mac:controlled`，通过 `FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:controlled` 调用被控制端打包器，并让发布清单指向 `npm run release:mac:controlled`。
+- 可能原因：此前 release 产物流程只面向完整桌面端，远端/被控制端脚本只生成 `.app`。
+- 解决状态：已解决
+
+## [2026-07-02 10:32:12 CST]
+- 问题描述：Modal Cloud `/client` 入口未公开提供被控制端客户端，直接访问返回 401，无法作为被控制端 release 的 `REMOTE_CLIENT_URL`。
+- 发生位置：`src/cloud-service.js handleApi`；`curl https://reecewong520--focus-pet-cloud-cloud.modal.run/client`；`node --test --test-name-pattern "Focus Pet Cloud serves a public controlled client" test/core.test.js`
+- 上下文：新增测试要求 Cloud 后端提供公开 `/client`，包含注册、好友码、WebSocket 和 WebRTC 语音/视频控件，并且不包含活动或截图分析面板。
+- 可能原因：此前 Cloud 后端只实现 API/WSS，远端客户端入口只存在于本地 chat service。
+- 解决状态：未解决
+
+## [2026-07-02 10:33:31 CST]
+- 问题描述：Modal Cloud `/client` 入口未公开提供被控制端客户端，直接访问返回 401，无法作为被控制端 release 的 `REMOTE_CLIENT_URL`。
+- 发生位置：`src/cloud-service.js handleApi`；`curl https://reecewong520--focus-pet-cloud-cloud.modal.run/client`；`node --test --test-name-pattern "Focus Pet Cloud serves a public controlled client" test/core.test.js`
+- 上下文：Cloud 后端已新增公开 `/client` HTML，被控制端可在该入口创建 ID、显示好友码、添加好友，并通过 Cloud WebSocket 建立 WebRTC 语音/视频；本地临时 Cloud 服务实测 `/client` 返回 200。
+- 可能原因：此前 Cloud 后端只实现 API/WSS，远端客户端入口只存在于本地 chat service。
+- 解决状态：已解决
+
+## [2026-07-02 10:37:53 CST]
+- 问题描述：公开 GitHub Release 资产和 app 名称包含 `Controlled`，会向下载用户暴露内部控制端/被控制端角色命名。
+- 发生位置：`package.json release:mac:controlled`；`dist/release/v1.0.0/Focus-Pet-Controlled-*`；GitHub Release v1.0.0 assets
+- 上下文：README 已收回控制/被控制公开表述，但 release 资产文件名和 app 名仍使用 `Focus Pet Controlled`。
+- 可能原因：为了区分内部打包脚本，误把内部角色名用于公开发布资产名称。
+- 解决状态：未解决
+
+## [2026-07-02 10:39:33 CST]
+- 问题描述：公开 Cloud `/client` 页面标题和品牌仍残留内部英文角色命名，会被下载用户看到。
+- 发生位置：`src/cloud-service.js cloudClientHtml`；`rg -n "Controlled" . --glob '!dist/**' --glob '!node_modules/**' --glob '!output/**' --glob '!tmp/**'`
+- 上下文：GitHub Release 资产名和 README 已改为普通 Focus Pet 命名，但 Cloud 客户端 HTML 的 title 和 brand 仍未同步收敛。
+- 可能原因：先修复了发布资产命名，遗漏了 Cloud 页面模板里的公开标题。
+- 解决状态：未解决
+
+## [2026-07-02 10:40:21 CST]
+- 问题描述：公开 GitHub Release 资产和 app 名称包含 `Controlled`，会向下载用户暴露内部控制端/被控制端角色命名。
+- 发生位置：`package.json release:mac:controlled`；`dist/release/v1.0.0/Focus-Pet-Controlled-*`；GitHub Release v1.0.0 assets
+- 上下文：`release:mac:controlled` 已改为输出普通 `Focus Pet` 应用名和 `Focus-Pet-*` 资产名；GitHub Release v1.0.0 已重新上传普通文件名的 DMG/ZIP/manifest。
+- 可能原因：为了区分内部打包脚本，误把内部角色名用于公开发布资产名称。
+- 解决状态：已解决
+
+## [2026-07-02 10:40:21 CST]
+- 问题描述：公开 Cloud `/client` 页面标题和品牌仍残留内部英文角色命名，会被下载用户看到。
+- 发生位置：`src/cloud-service.js cloudClientHtml`；`rg -n "Controlled" . --glob '!dist/**' --glob '!node_modules/**' --glob '!output/**' --glob '!tmp/**'`
+- 上下文：Cloud 客户端 HTML title 和 brand 已改回普通 `Focus Pet`；目标测试已新增回归断言并通过。
+- 可能原因：先修复了发布资产命名，遗漏了 Cloud 页面模板里的公开标题。
+- 解决状态：已解决
