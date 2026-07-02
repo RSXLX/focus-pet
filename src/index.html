@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: file:; media-src 'self' data: blob: file:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'none'; frame-src 'none'"
+  />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Focus Pet</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main id="pet" class="pet mood-unknown compact">
+    <section class="bubble">
+      <div class="toolbar">
+        <button id="collapse" title="收起">−</button>
+        <button id="chatToggle" title="聊天" aria-pressed="false">聊天</button>
+        <button id="tasksToggle" title="今日任务" aria-pressed="false">任务</button>
+        <button id="reviewToggle" title="今日复盘" aria-pressed="false">复盘</button>
+        <button id="onboardingToggle" title="新手引导" aria-pressed="false">引导</button>
+        <button id="settingsToggle" title="设置" aria-pressed="false">设置</button>
+        <button id="openData" title="打开数据目录">数据</button>
+        <button id="quit" title="退出">×</button>
+      </div>
+      <p id="message">我正在醒来，马上帮你盯一下状态。</p>
+      <small id="context">只读取当前 App 和窗口标题，不截屏。</small>
+    </section>
+
+    <section id="panel" class="panel hidden">
+      <h2 id="panelTitle">今日任务</h2>
+      <div id="taskComposer" class="task-composer">
+        <input id="newTaskText" type="text" placeholder="写下下一件小任务" maxlength="120" aria-describedby="taskComposerFeedback" />
+        <select id="newTaskPriority" aria-label="优先级">
+          <option value="high">高</option>
+          <option value="medium" selected>中</option>
+          <option value="low">低</option>
+        </select>
+        <select id="newTaskScene" aria-label="专注场景">
+          <option value="">场景</option>
+        </select>
+        <input id="newTaskDue" type="date" aria-label="截止日期" />
+        <button id="addTask" type="button">添加</button>
+      </div>
+      <div id="taskComposerFeedback" class="task-composer-feedback" role="status" aria-live="polite" hidden></div>
+      <div id="taskSummary" class="task-summary">
+        <span id="taskProgress">0/0 完成</span>
+        <button id="editTasks" type="button">导入</button>
+      </div>
+      <div id="taskList" class="task-list" aria-label="今日任务清单"></div>
+      <textarea id="tasks" class="task-editor hidden" spellcheck="false"></textarea>
+      <div id="review" class="review hidden"></div>
+      <div id="onboardingPanel" class="onboarding-panel hidden" data-onboarding-complete="false">
+        <div class="onboarding-summary">
+          <strong>3 分钟完成基础模式</strong>
+          <span>高级能力默认关闭，需要你进入对应设置后手动开启。</span>
+        </div>
+
+        <section class="onboarding-card" data-onboarding-mode="basic" data-onboarding-duration="under-3-minutes">
+          <header>
+            <strong>基础模式</strong>
+            <span>任务 + 宠物 + 前台 App 判断</span>
+          </header>
+          <dl class="onboarding-facts">
+            <div><dt>会采集什么</dt><dd>当前前台 App 名称、窗口标题、任务状态和宠物互动。</dd></div>
+            <div><dt>不会采集什么</dt><dd>不会截屏，不会读取文件内容，不会开启外部通话。</dd></div>
+            <div><dt>数据保存在哪里</dt><dd>本机 `~/.hermes/focus-watchdog` 目录。</dd></div>
+            <div><dt>是否会外发</dt><dd>不会外发，除非之后主动开启 AI 或社交能力。</dd></div>
+          </dl>
+          <button id="completeBasicOnboarding" type="button" data-onboarding-complete="basic">完成基础模式</button>
+        </section>
+
+        <section class="onboarding-card" data-onboarding-mode="enhanced">
+          <header>
+            <strong>增强模式</strong>
+            <span>工作/学习/娱乐关键词 + 复盘</span>
+          </header>
+          <dl class="onboarding-facts">
+            <div><dt>会采集什么</dt><dd>基础模式数据、关键词规则、App 规则和近 24 小时活动统计。</dd></div>
+            <div><dt>不会采集什么</dt><dd>不会自动截屏，不会自动打开社交监督或通话。</dd></div>
+            <div><dt>数据保存在哪里</dt><dd>任务、设置和活动摘要保存在本机数据目录。</dd></div>
+            <div><dt>是否会外发</dt><dd>复盘 LLM 只有在配置密钥后才会发起请求。</dd></div>
+          </dl>
+          <button id="openEnhancedOnboarding" type="button">配置判断规则</button>
+        </section>
+
+        <section class="onboarding-card" data-onboarding-mode="advanced" data-onboarding-default="off">
+          <header>
+            <strong>高级模式</strong>
+            <span>屏幕 LLM + 社交监督 + WebRTC</span>
+          </header>
+          <dl class="onboarding-facts">
+            <div><dt>会采集什么</dt><dd>你主动开启后，可能包含屏幕缩略图、外部会话消息和通话信令。</dd></div>
+            <div><dt>不会采集什么</dt><dd>不会默认开启屏幕监控，不会默认发起社交监督或 WebRTC 通话。</dd></div>
+            <div><dt>数据保存在哪里</dt><dd>聊天、媒体记录和监控摘要保存在本机或你配置的持久化目录。</dd></div>
+            <div><dt>是否会外发</dt><dd>仅在你启用 LLM 请求或打开外部聊天连接后外发。</dd></div>
+          </dl>
+          <button id="openAdvancedOnboarding" type="button">查看高级设置</button>
+        </section>
+      </div>
+      <div id="settingsPanel" class="settings-panel hidden" data-active-settings-group="basic">
+        <nav class="settings-tabs" aria-label="设置分组">
+          <button id="settingsTabBasic" class="settings-tab" type="button" data-settings-tab="basic" aria-controls="settingsGroupBasic" aria-pressed="true">基础</button>
+          <button id="settingsTabFocus" class="settings-tab" type="button" data-settings-tab="focus" aria-controls="settingsGroupFocus" aria-pressed="false">判断</button>
+          <button id="settingsTabAi" class="settings-tab" type="button" data-settings-tab="ai" aria-controls="settingsGroupAi" aria-pressed="false">AI</button>
+          <button id="settingsTabSocial" class="settings-tab" type="button" data-settings-tab="social" aria-controls="settingsGroupSocial" aria-pressed="false">社交</button>
+          <button id="settingsTabAdvanced" class="settings-tab" type="button" data-settings-tab="advanced" aria-controls="settingsGroupAdvanced" aria-pressed="false">高级</button>
+        </nav>
+
+        <section id="settingsGroupBasic" class="settings-group" data-settings-group="basic" aria-labelledby="settingsTabBasic">
+          <label class="setting-line"><span>自动弹提醒</span><input id="settingAutoPopup" type="checkbox" /></label>
+          <label class="setting-line"><span>开机启动</span><input id="settingLaunchAtLogin" type="checkbox" /></label>
+          <div id="launchAtLoginStatus" class="setting-note"></div>
+          <label class="setting-line"><span>提醒冷却</span><input id="settingCooldown" type="number" min="1" max="120" /></label>
+          <label class="setting-line"><span>空闲提醒</span><input id="settingIdle" type="number" min="1" max="60" /></label>
+          <label class="setting-line"><span>宠物强度</span>
+            <select id="settingIntensity">
+              <option value="calm">安静</option>
+              <option value="normal">正常</option>
+              <option value="active">活跃</option>
+            </select>
+          </label>
+        </section>
+
+        <section id="settingsGroupFocus" class="settings-group" data-settings-group="focus" aria-labelledby="settingsTabFocus" hidden>
+          <label class="setting-block"><span>工作关键词</span><textarea id="settingFocusKeywords" spellcheck="false"></textarea></label>
+          <label class="setting-block"><span>学习关键词</span><textarea id="settingStudyKeywords" spellcheck="false"></textarea></label>
+          <label class="setting-block"><span>游戏关键词</span><textarea id="settingGameKeywords" spellcheck="false"></textarea></label>
+          <label class="setting-block"><span>分心关键词</span><textarea id="settingDistractionKeywords" spellcheck="false"></textarea></label>
+          <label class="setting-block"><span>游戏 App</span><textarea id="settingGameApps" spellcheck="false"></textarea></label>
+          <label class="setting-block"><span>工作 App</span><textarea id="settingWorkApps" spellcheck="false"></textarea></label>
+        </section>
+
+        <section id="settingsGroupAi" class="settings-group" data-settings-group="ai" data-setting-risk="ai" aria-labelledby="settingsTabAi" hidden>
+          <div class="settings-risk-note">屏幕监控和 LLM 请求集中在这里。本地模型可用 Ollama 或本机 OpenAI-compatible 服务。</div>
+          <label class="setting-line"><span>云端请求</span>
+            <select id="settingLlmCloudMode">
+              <option value="allowed">允许云端</option>
+              <option value="local-only">仅本地</option>
+            </select>
+          </label>
+          <label class="setting-line"><span>屏幕监控</span><input id="settingScreenMonitorEnabled" type="checkbox" /></label>
+          <label class="setting-line"><span>监控间隔 秒</span><input id="settingScreenMonitorInterval" type="number" min="15" max="300" /></label>
+          <label class="setting-line"><span>屏幕模型提供方</span>
+            <select id="settingScreenMonitorProvider">
+              <option value="ollama">Ollama 本地</option>
+              <option value="local-openai-compatible">本地 OpenAI-compatible</option>
+              <option value="openai-compatible">云端 OpenAI-compatible</option>
+            </select>
+          </label>
+          <label class="setting-block"><span>LLM Endpoint</span><input id="settingScreenMonitorEndpoint" type="url" placeholder="http://127.0.0.1:11434/v1/chat/completions" /></label>
+          <label class="setting-block"><span>LLM Model</span><input id="settingScreenMonitorModel" type="text" placeholder="vision-model" maxlength="120" /></label>
+          <label class="setting-line"><span>复盘 LLM</span><input id="settingReviewLlmEnabled" type="checkbox" /></label>
+          <label class="setting-line"><span>复盘模型提供方</span>
+            <select id="settingReviewLlmProvider">
+              <option value="ollama">Ollama 本地</option>
+              <option value="local-openai-compatible">本地 OpenAI-compatible</option>
+              <option value="openai-compatible">云端 OpenAI-compatible</option>
+            </select>
+          </label>
+          <label class="setting-block"><span>复盘 URL</span><input id="settingReviewLlmEndpoint" type="url" placeholder="https://api.stepfun.com/step_plan/v1" /></label>
+          <label class="setting-line"><span>复盘模型</span><input id="settingReviewLlmModel" type="text" placeholder="step-3.7-flash" maxlength="120" /></label>
+          <div id="llmSelfCheckResult" class="llm-self-check-result" role="status" aria-live="polite"></div>
+          <div class="settings-actions">
+            <button id="testLlmConnectivity" type="button">LLM 自检</button>
+            <button id="testScreenMonitor" type="button">测试监控</button>
+            <button id="openScreenRecording" type="button">屏幕权限</button>
+          </div>
+        </section>
+
+        <section id="settingsGroupSocial" class="settings-group" data-settings-group="social" data-setting-risk="social" aria-labelledby="settingsTabSocial" hidden>
+          <label class="setting-line"><span>状态共享</span>
+            <select id="settingSocialActivityShareLevel">
+              <option value="presence">只共享在线状态</option>
+              <option value="status">共享工作/学习/休息状态</option>
+              <option value="summary">共享状态摘要</option>
+              <option value="screen-summary">共享屏幕分析摘要</option>
+            </select>
+          </label>
+          <label class="setting-line"><span>媒体上限 MB</span><input id="settingMediaMb" type="number" min="1" max="100" /></label>
+          <label class="setting-line"><span>语音快捷键</span><input id="settingVoiceShortcut" type="text" placeholder="Alt+R" maxlength="40" spellcheck="false" /></label>
+          <div class="settings-risk-note">邀请码、外部会话和通话配置在聊天面板管理。</div>
+        </section>
+
+        <section id="settingsGroupAdvanced" class="settings-group" data-settings-group="advanced" data-setting-risk="advanced" aria-labelledby="settingsTabAdvanced" hidden>
+          <label class="setting-block"><span>更新源 URL</span><input id="settingUpdateUrl" type="url" placeholder="https://example.com/latest.json" /></label>
+          <label class="setting-line"><span>自动检查更新</span><input id="settingAutoUpdate" type="checkbox" /></label>
+          <label class="setting-line"><span>本地日志保留 天</span><input id="settingActivityRetentionDays" type="number" min="1" max="365" /></label>
+          <div id="updateResult" class="update-result"></div>
+          <div class="settings-actions">
+            <button id="checkUpdates" type="button">检查更新</button>
+            <button id="openDataFromSettings" type="button">数据目录</button>
+            <button id="runDiagnosticsFromSettings" type="button">诊断摘要</button>
+            <button id="openPermissions" type="button">权限</button>
+          </div>
+          <div id="platformStatus" class="setting-note"></div>
+          <section id="permissionGuide" class="permission-guide" aria-labelledby="permissionGuideTitle">
+            <header>
+              <div>
+                <strong id="permissionGuideTitle">权限引导</strong>
+                <span id="permissionGuideStatus">等待检查权限状态</span>
+              </div>
+              <button id="refreshPermissions" type="button">重新检查</button>
+            </header>
+            <div id="permissionGuideList" class="permission-guide-list"></div>
+          </section>
+        </section>
+
+        <div class="settings-actions settings-save-row">
+          <button id="saveSettings" type="button">保存设置</button>
+        </div>
+      </div>
+      <div class="panel-actions">
+        <button id="saveTasks">保存任务</button>
+        <button id="closePanel">收起</button>
+      </div>
+    </section>
+
+    <section id="homeActions" class="home-actions hidden" aria-label="快速动作">
+      <button id="focusNow">继续任务</button>
+      <button id="quickChat">消息</button>
+      <button id="careMenu" aria-controls="petMenu" aria-expanded="false">照料</button>
+    </section>
+
+    <section class="avatar" aria-label="Nervy 桌面宠物，按 Enter 摸摸它" role="button" tabindex="0" title="按 Enter 或空格摸摸宠物">
+      <div class="pet-sprite" aria-hidden="true"></div>
+      <div class="status-dot" id="statusDot"></div>
+    </section>
+
+    <section id="petStats" class="pet-stats" aria-label="宠物状态">
+      <header class="pet-stats-header">
+        <span id="petStateSummary">正在同步状态</span>
+        <b id="petCareCue">陪伴中</b>
+      </header>
+      <div id="vitalChips" class="vital-chips" aria-label="状态总览">
+        <button id="moodChip" class="vital-chip" data-vital-chip="mood" type="button">心情平稳</button>
+        <button id="energyChip" class="vital-chip" data-vital-chip="energy" type="button">精力充足</button>
+        <button id="bondChip" class="vital-chip" data-vital-chip="bond" type="button">亲密熟悉</button>
+      </div>
+      <div class="vital-row" data-vital="mood" role="button" tabindex="0" aria-pressed="false" title="查看心情状态">
+        <span>心情</span>
+        <div class="vital-track"><i id="moodBar"></i></div>
+        <em id="moodTarget" class="vital-target" aria-hidden="true" hidden></em>
+        <em id="moodDelta" class="vital-delta" aria-hidden="true" hidden></em>
+        <b id="moodValue">80</b>
+      </div>
+      <div class="vital-row" data-vital="energy" role="button" tabindex="0" aria-pressed="false" title="查看精力状态">
+        <span>精力</span>
+        <div class="vital-track"><i id="energyBar"></i></div>
+        <em id="energyTarget" class="vital-target" aria-hidden="true" hidden></em>
+        <em id="energyDelta" class="vital-delta" aria-hidden="true" hidden></em>
+        <b id="energyValue">70</b>
+      </div>
+      <div class="vital-row" data-vital="bond" role="button" tabindex="0" aria-pressed="false" title="查看亲密状态">
+        <span>亲密</span>
+        <div class="vital-track"><i id="bondBar"></i></div>
+        <em id="bondTarget" class="vital-target" aria-hidden="true" hidden></em>
+        <em id="bondDelta" class="vital-delta" aria-hidden="true" hidden></em>
+        <b id="bondValue">50</b>
+      </div>
+      <div id="petCareFeedback" class="care-feedback" role="status" aria-live="polite">
+        <span id="petCareReason">最近：刚醒来，正在适应今天的节奏。</span>
+        <em id="petCareSource" hidden>来源</em>
+        <small id="petCareRecent">刚醒来</small>
+        <b id="petCareDelta">状态稳定</b>
+      </div>
+      <div id="petVitalFocusAction" class="vital-focus-action" hidden>
+        <span id="petVitalFocusLabel">心情·平稳</span>
+        <em id="petVitalFocusGoal" hidden>差0</em>
+        <small id="petVitalFocusReason">状态稳定，可以继续一段专注。</small>
+        <small id="petVitalFocusImpact" class="vital-focus-impact" hidden></small>
+        <button id="petVitalFocusButton" type="button">照料</button>
+      </div>
+      <div id="petCareGuidance" class="care-guidance">
+        <span id="petCareNext">状态稳定，可以继续一段专注。</span>
+        <b id="petCareWhy">状态稳定</b>
+        <p id="petCareDetail" class="care-guidance-detail">状态稳定，可以继续一段专注。</p>
+        <small id="petCarePreview" hidden></small>
+        <button id="petCareNow" type="button">照料</button>
+      </div>
+    </section>
+
+    <section id="petMenu" class="pet-menu hidden" aria-label="照料宠物">
+      <header class="pet-menu-header">
+        <span id="careMenuTitle">现在适合陪伴</span>
+        <b id="careMenuReason">状态稳定</b>
+      </header>
+      <p id="careMenuInsight" class="care-menu-insight">先观察当前状态，再选一个轻动作。</p>
+      <div id="careActions" class="care-actions"></div>
+    </section>
+
+    <button id="expandHint" title="查看提醒" aria-label="查看提醒">!</button>
+
+    <section id="chatPanel" class="chat-panel hidden">
+      <header class="chat-header">
+        <strong>聊天</strong>
+        <button id="closeChat">×</button>
+      </header>
+      <div class="friend-row">
+        <select id="friendSelect" aria-label="好友"></select>
+        <button id="revokeSessionButton" type="button" title="撤销该好友的外部设备会话">撤销会话</button>
+      </div>
+      <section id="peerActivity" class="peer-activity" hidden>
+        <img id="peerActivityImage" alt="对方屏幕活动截图" />
+        <div>
+          <strong id="peerActivityTitle">对方正在做什么</strong>
+          <span id="peerActivityText">等待对方共享屏幕分析。</span>
+          <small id="peerActivityMeta">暂无同步</small>
+        </div>
+        <ol id="peerActivityLog" class="peer-activity-log"></ol>
+      </section>
+      <div id="chatMessages" class="chat-messages"></div>
+      <div class="chat-compose" data-mode="text">
+        <button id="voiceModeButton" class="chat-mode-button" type="button" title="切换到语音消息">语音</button>
+        <input id="chatInput" placeholder="发消息" />
+        <button id="sendChat" type="button">发送</button>
+        <button id="textModeButton" class="chat-mode-button" type="button" title="切换到文字输入" hidden>键盘</button>
+        <button id="voiceRecordButton" class="chat-voice-record" type="button" hidden>按住说话</button>
+      </div>
+      <div class="chat-tools">
+        <button id="imageButton" type="button">图片</button>
+        <button id="fileButton" type="button">文件</button>
+        <button id="petGifButton" type="button" aria-expanded="false" aria-controls="petGifTray">动图</button>
+        <button id="chatCallAudio" type="button">语音通话</button>
+        <button id="chatCallVideo" type="button">视频通话</button>
+        <input id="mediaInput" type="file" accept="image/*,video/*,audio/*,.pdf,.txt,.md,.csv,.json,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx" hidden />
+      </div>
+      <div id="petGifTray" class="pet-gif-tray" role="menu" aria-label="宠物互动动图" hidden></div>
+      <div id="chatRtcNotice" class="chat-rtc-notice" role="status" aria-live="polite" hidden>
+        <span>WebRTC 通话可能向通话对方暴露网络地址；仅与可信联系人通话。</span>
+        <button id="chatRtcContinue" type="button">继续通话</button>
+        <button id="chatRtcCancel" type="button">取消</button>
+      </div>
+      <div id="chatCallStage" class="chat-call-stage hidden">
+        <video id="localCallVideo" autoplay muted playsinline></video>
+        <video id="remoteCallVideo" autoplay playsinline></video>
+        <div class="chat-call-actions">
+          <button id="chatCallEnd" type="button">挂断</button>
+        </div>
+      </div>
+      <div id="chatCallStatus" class="chat-call-status" role="status" aria-live="polite" hidden>未通话</div>
+    </section>
+  </main>
+  <script src="intervention-policy.js"></script>
+  <script src="focus-scene-templates.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

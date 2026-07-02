@@ -1,0 +1,11 @@
+.DS_Store
+.git
+node_modules
+npm-debug.log*
+Dockerfile
+.dockerignore
+build
+output
+docs/errorThing*.md
+*.dmg
+*.zip

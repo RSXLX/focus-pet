@@ -1,0 +1,13 @@
+.DS_Store
+node_modules/
+dist/
+output/
+tmp/
+__pycache__/
+*.pyc
+*.log
+*.tmp
+*.zip
+*.dmg
+*.tgz
+*.tgz.b64
