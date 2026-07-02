@@ -9966,3 +9966,31 @@
 - 上下文：GitHub 发布目标已创建，release 产物脚本和签名修复已完成，错误日志 gate 可以重新验证。
 - 可能原因：GitHub 发布目标尚未创建，且 release 产物脚本和签名修复的已解决记录还未追加。
 - 解决状态：已解决
+
+## [2026-07-02 09:48:46 CST]
+- 问题描述：列出 README 相关资源时将不存在的顶层 `assets` 目录传给 `rg --files`，命令返回目录不存在错误。
+- 发生位置：`rg --files docs assets src`
+- 上下文：准备补充中英文 README 时，需要确认项目文档和宠物资源路径；仓库资源实际位于 `src/assets/`。
+- 可能原因：沿用了通用资源目录名，未先确认仓库没有顶层 `assets/`。
+- 解决状态：已解决
+
+## [2026-07-02 09:50:20 CST]
+- 问题描述：读取 completion verification skill 时使用了错误的本地路径，`sed` 返回文件不存在。
+- 发生位置：`sed -n '1,220p' /Users/sxlx/.codex/skills/superpowers/verification-before-completion/SKILL.md`
+- 上下文：准备提交 README 双语改动前，需要读取完成前验证说明；正确路径位于 `/Users/sxlx/.codex/plugins/cache/openai-curated/superpowers/3fdeeb49/skills/verification-before-completion/SKILL.md`。
+- 可能原因：将技能根目录 `r10` 误展开为用户技能目录。
+- 解决状态：已解决
+
+## [2026-07-02 09:50:43 CST]
+- 问题描述：`npm test` 运行 128 个测试时有 2 个 README 文档契约测试失败。
+- 发生位置：`test/core.test.js:5418` / `test/core.test.js:5432`
+- 上下文：重写公开 README 后，英文 README 缺少聊天模式说明和 release/diagnostics gate 说明；项目测试要求 README 保留这些公开文档契约。
+- 可能原因：README 专业化时过度简化了既有中文聊天说明和诊断发布检查项。
+- 解决状态：未解决
+
+## [2026-07-02 09:51:32 CST]
+- 问题描述：`npm test` 的 README 文档契约测试此前有 2 个失败。
+- 发生位置：`test/core.test.js:5418` / `test/core.test.js:5432`
+- 上下文：已在英文和中文 README 中补充社交聊天模式说明、WebRTC/TURN 边界、release preflight 诊断 gate、错误日志 gate 和诊断包范围说明；针对失败测试的精确复跑已通过。
+- 可能原因：README 专业化时过度简化了既有中文聊天说明和诊断发布检查项。
+- 解决状态：已解决

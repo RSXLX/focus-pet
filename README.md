@@ -2,16 +2,26 @@
 
 > A lightweight desktop companion for focus, tasks, review, and optional social accountability.
 
+**Language:** English | [简体中文](README.zh-CN.md)
+
 [![Release](https://img.shields.io/github/v/release/RSXLX/focus-pet?label=release)](https://github.com/RSXLX/focus-pet/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](#downloads)
 [![Electron](https://img.shields.io/badge/Electron-39-47848F)](https://www.electronjs.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](#license)
 
-Focus Pet is a medium-privacy desktop pet app. It stays on top of your desktop, watches lightweight context such as the current foreground app/window title, helps you track tasks, and gives low-disruption nudges when your activity may drift away from your current work.
+Focus Pet is a medium-privacy desktop pet app for people who want lightweight focus support without turning their computer into a surveillance tool. It stays on top of your desktop, reads lightweight local context such as the current foreground app and window title, helps you manage today's tasks, and gives low-disruption nudges when your activity may drift away from your current work.
 
 <p align="center">
   <img src="src/assets/pets/nervy-sci-fi-kid/gifs/full-body-states-demo.gif" width="360" alt="Focus Pet full-body animation demo">
 </p>
+
+## Project Status
+
+- Public repository: [RSXLX/focus-pet](https://github.com/RSXLX/focus-pet)
+- Current release: [v1.0.0](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.0)
+- Published binary: macOS Apple Silicon DMG and ZIP
+- Source support: macOS and Windows development scripts are included
+- Signing status: public macOS builds are ad-hoc signed and not Apple-notarized yet
 
 ## Downloads
 
@@ -60,6 +70,13 @@ By default, it may store locally:
 
 Optional capabilities such as screen monitor, LLM review, external chat, and WebRTC must be enabled or configured by the user. Details are documented in [system overview](docs/system-overview.md), [social security boundary](docs/social-security-boundary.md), and [diagnostics](docs/diagnostics.md).
 
+## Social Chat Modes
+
+Focus Pet separates asynchronous companion chat from realtime calls:
+
+- WeChat-style compact chat window (`微信式小聊天窗口`): supports text, media messages, pet GIF sharing, and voice messages (`语音消息`) recorded through `MediaRecorder`. The desktop UI supports press-and-hold recording (`按住说话`) and the voice shortcut (`语音快捷键`) `Alt+R`.
+- Realtime calls: realtime voice chat (`实时语音聊天`) and realtime video chat (`实时视频聊天`) use WebRTC. Session setup uses WebSocket signaling (`WebSocket 信令`), and TURN can be configured for NAT traversal.
+
 ## Quick Start From Source
 
 Requirements:
@@ -83,6 +100,21 @@ npm run check
 npm run verify:pet-render
 npm run diagnostics
 ```
+
+## Release And Diagnostics Gates
+
+Release preflight keeps the public build, diagnostics output, and privacy boundary auditable. Useful gates:
+
+```bash
+node scripts/release-preflight.js --check diagnostics-summary-output
+node scripts/release-preflight.js --check diagnostics-bundle-output
+node scripts/release-preflight.js --check error-log
+node scripts/release-preflight.js --run=fast
+```
+
+The `diagnostics-summary-output` gate validates `summarySchemaValid`, `summaryGeneratedAtValid`, `未知顶层字段数量`, secret-field checks such as `json-secret-field`, raw-field protection from `rawIssueKey` to `json-raw-field`, empty acceptance checks such as `emptyAcceptanceSections`, and key naming consistency between `snake_case` and `kebab-case`. Output marked `未通过` must be fixed before release, including diagnostic labels that contain 冒号、括号、破折号或空格.
+
+The `diagnostics-bundle-output` gate checks `summaryBoundaryIssues` and `summarySchemaValid`. The `error-log` gate reports `openUnresolvedEntries`. The 诊断包 includes the 最新 20 个 relevant error records for review without exposing high-sensitivity content.
 
 ## Build Release Assets
 
