@@ -122,8 +122,8 @@ Focus Pet 的公开分发边界改为两端模型：
 - peer 的 `messages[*].activity` 恒为 `null`，避免通过消息列表绕过活动边界。
 - peer 即使自己提交活动快照，也不会从服务端回读活动结果；该结果只进入 owner 本机视图。
 - owner 调用本机状态接口或 WebSocket 时，仍保留完整活动数据，用于本机监督、复盘和诊断。
-- 被控制端发布包不渲染“对方正在做什么”或截图分析面板。
-- 公开发布使用 `npm run release:mac:controlled` 生成被控制端 DMG/ZIP/manifest；完整桌面端保留为控制端/开发端，不作为普通公开下载包。
+- 可选远端被控制端客户端不渲染“对方正在做什么”或截图分析面板。
+- 普通公开下载使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；远端被控制端客户端只作为可选聊天/通话包，通过 `npm run release:mac:controlled` 单独构建。
 
 本文档不引入隐私模式、敏感 App 列表、窗口标题脱敏或用户纠错机制。
 

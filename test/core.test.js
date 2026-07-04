@@ -3175,6 +3175,16 @@ test('remote client mac packaging wraps the deployed HTTPS client', () => {
   assert.throws(() => assertHttpsClientUrl('https://example.com/client-evil'), /\/client/);
 });
 
+test('remote client release assets are clearly separated from the desktop pet app', () => {
+  const packageJson = require('../package.json');
+  const releaseCommand = packageJson.scripts['release:mac:controlled'];
+
+  assert.match(releaseCommand, /APP_NAME="Focus Pet Client"/);
+  assert.match(releaseCommand, /FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:controlled/);
+  assert.doesNotMatch(releaseCommand, /APP_NAME="Focus Pet"/);
+  assert.doesNotMatch(releaseCommand, /Controlled/);
+});
+
 test('external chat exposes WebRTC signaling and ICE configuration', () => {
   const state = {
     authToken: 'owner-token',
@@ -6061,6 +6071,32 @@ test('release and local LLM docs describe current diagnostics gates', () => {
   assert.match(systemOverview, /snake_case[\s\S]*kebab-case|kebab-case[\s\S]*snake_case/);
 });
 
+test('public download docs point to the full desktop pet release', () => {
+  const packageJson = require('../package.json');
+  const tag = `v${packageJson.version}`;
+  const readme = fs.readFileSync(path.join(PROJECT_ROOT, 'README.md'), 'utf8');
+  const readmeZh = fs.readFileSync(path.join(PROJECT_ROOT, 'README.zh-CN.md'), 'utf8');
+  const focusCloud = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'focus-pet-cloud.md'), 'utf8');
+  const systemOverview = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'system-overview.md'), 'utf8');
+  const socialBoundary = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'social-security-boundary.md'), 'utf8');
+
+  assert.match(readme, new RegExp(`Current release: \\[${tag}\\]`));
+  assert.match(readme, new RegExp(`Latest release: \\[${tag}\\]`));
+  assert.match(readmeZh, new RegExp(`当前版本：\\[${tag}\\]`));
+  assert.match(readmeZh, new RegExp(`最新版本：\\[${tag}\\]`));
+  for (const doc of [readme, readmeZh]) {
+    assert.doesNotMatch(doc, /releases\/tag\/v1\.0\.[012]/);
+    assert.match(doc, /release:mac/);
+  }
+  assert.match(focusCloud, /默认公开下载[\s\S]*完整桌宠/);
+  assert.match(focusCloud, /npm run release:mac/);
+  assert.match(focusCloud, /聊天\/通话客户端[\s\S]*release:mac:controlled/);
+  assert.match(systemOverview, /普通公开下载[\s\S]*完整桌宠[\s\S]*npm run release:mac/);
+  assert.doesNotMatch(systemOverview, /公开分发应使用被控制端 release/);
+  assert.match(socialBoundary, /远端被控制端客户端[\s\S]*可选/);
+  assert.doesNotMatch(socialBoundary, /完整桌面端保留为控制端\/开发端，不作为普通公开下载包/);
+});
+
 test('Nervy pet spritesheet is wired to the renderer contract', () => {
   const spritePath = path.join(PROJECT_ROOT, 'src', 'assets', 'pets', 'nervy-sci-fi-kid', 'spritesheet.webp');
   assert.ok(fs.existsSync(spritePath));
@@ -7116,6 +7152,19 @@ test('mac packaging preserves Electron framework symlink targets', () => {
   assert.doesNotMatch(source, /fs\.cpSync\(path\.join\(root,\s*'node_modules'\),\s*path\.join\(resourcesApp,\s*'node_modules'\)/);
 });
 
+test('platform packages include only runtime app files', () => {
+  const macPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-macos.js'), 'utf8');
+  const windowsPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-windows.js'), 'utf8');
+
+  for (const source of [macPackager, windowsPackager]) {
+    assert.match(source, /for \(const entry of \['src'\]\)/);
+    assert.match(source, /fs\.writeFileSync\(path\.join\(resourcesApp,\s*'package\.json'\)/);
+    assert.match(source, /main:\s*packageJson\.main/);
+    assert.doesNotMatch(source, /\['src',\s*'scripts'/);
+    assert.doesNotMatch(source, /package-lock\.json/);
+  }
+});
+
 test('app logo assets are generated and wired into platform packages', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
   const macPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-macos.js'), 'utf8');
@@ -7158,7 +7207,7 @@ test('mac release assets script plans dmg zip and checksum manifest names', () =
   assert.equal(packageJson.scripts['release:mac'], 'node scripts/create-mac-release-assets.js');
   assert.equal(
     packageJson.scripts['release:mac:controlled'],
-    'APP_NAME="Focus Pet" BUNDLE_ID=dev.focus-pet.app FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:controlled node scripts/create-mac-release-assets.js'
+    'APP_NAME="Focus Pet Client" BUNDLE_ID=dev.focus-pet.client FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:controlled node scripts/create-mac-release-assets.js'
   );
   assert.match(packageJson.scripts.check, /node --check scripts\/create-mac-release-assets\.js/);
 

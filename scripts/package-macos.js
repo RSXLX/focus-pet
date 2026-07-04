@@ -27,11 +27,19 @@ function setPlistValue(plist, key, value) {
 function copyProject() {
   fs.rmSync(resourcesApp, { recursive: true, force: true });
   fs.mkdirSync(resourcesApp, { recursive: true });
-  for (const entry of ['src', 'scripts', 'package.json', 'package-lock.json']) {
+  for (const entry of ['src']) {
     const from = path.join(root, entry);
     if (!fs.existsSync(from)) continue;
     fs.cpSync(from, path.join(resourcesApp, entry), { recursive: true });
   }
+  fs.writeFileSync(path.join(resourcesApp, 'package.json'), `${JSON.stringify({
+    name: packageJson.name,
+    version: packageJson.version,
+    description: packageJson.description,
+    main: packageJson.main,
+    license: packageJson.license,
+    dependencies: packageJson.dependencies || {}
+  }, null, 2)}\n`, 'utf8');
   const packagedModules = path.join(resourcesApp, 'node_modules');
   fs.mkdirSync(packagedModules, { recursive: true });
   for (const dependency of Object.keys(packageJson.dependencies || {})) {

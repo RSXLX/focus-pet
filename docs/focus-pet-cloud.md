@@ -47,7 +47,7 @@ FOCUS_PET_CLOUD_RTC_ICE_SERVERS='[
 
 公开被控制端客户端入口，不需要预置 token。用户打开后可以创建自己的稳定 ID、查看好友码、添加好友码，并通过 Cloud WebSocket 建立一对一 WebRTC 语音/视频通话。
 
-公开 macOS 下载包应使用该入口构建：
+该入口用于可选的聊天/通话客户端包。如果需要把 Cloud `/client` 包成一个只负责账号、好友和通话的远端客户端，可使用：
 
 ```bash
 REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:controlled
@@ -258,12 +258,13 @@ GitHub Pages 不能承载 Node/WebSocket 后端，也不能作为 Focus Pet Clou
 
 要让用户“下载好就可以用上”，推荐拆成两个发布面：
 
-1. GitHub Release 提供被控制端 DMG/ZIP，构建命令为 `REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:controlled`。
+1. 默认公开下载由 GitHub Release 提供完整桌宠 DMG/ZIP，构建命令为 `npm run release:mac`。
 2. Modal 提供统一 Focus Pet Cloud 后端，并通过 Secret 持有 StepFun key。
 3. 桌面端内置默认 Cloud 检查 URL，首次启动自动生成本机 `screenCheckDeviceId`。
 4. 桌面端调用 `POST /api/users` 注册，保存 `userId`、`friendCode` 和设备绑定 `authToken` 到本机。
 5. 用户只需要把 `friendCode` 发给对方，双方即可建立好友关系。
 6. 发起语音/视频时，桌面端通过 Cloud WebSocket 交换 WebRTC offer、answer 和 ICE candidate。
 7. 开启屏幕检查时，桌面端调用 Cloud `/api/screen-check`，不需要用户配置或持有 StepFun key。
+8. 如果只需要账号、好友和通话能力，可单独构建聊天/通话客户端：`REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:controlled`。
 
-当前仓库已经具备 Cloud 后端、Modal 部署入口、公开 `/client` 被控制端入口、稳定 ID、好友码、认证 WebSocket 信令、WebRTC TURN 配置接口、后端屏幕检查代理，以及被控制端 macOS DMG/ZIP release 脚本。完整桌面端保留为本地控制端/开发端。
+当前仓库已经具备 Cloud 后端、Modal 部署入口、公开 `/client` 聊天/通话客户端入口、稳定 ID、好友码、认证 WebSocket 信令、WebRTC TURN 配置接口、后端屏幕检查代理，以及完整桌宠 macOS DMG/ZIP release 脚本。聊天/通话客户端 release 脚本仅作为可选发布面保留。

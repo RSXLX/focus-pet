@@ -18,22 +18,24 @@ Focus Pet is a medium-privacy desktop pet app for people who want lightweight fo
 ## Project Status
 
 - Public repository: [RSXLX/focus-pet](https://github.com/RSXLX/focus-pet)
-- Current release: [v1.0.1](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1)
+- Current release: [v1.0.3](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3)
 - Published binary: macOS Apple Silicon DMG and ZIP
 - Source support: macOS and Windows development scripts are included
 - Signing status: public macOS builds are ad-hoc signed and not Apple-notarized yet
 
 ## Downloads
 
-Latest release: [v1.0.1](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1)
+Latest release: [v1.0.3](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3)
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1) | Download the DMG for normal installation. |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1) | ZIP archive is also available. |
-| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.1) | SHA-256 manifest is included. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3) | Download the DMG for the full desktop pet app. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3) | ZIP archive is also available. |
+| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3) | SHA-256 manifest is included. |
 
 macOS note: the current public build is ad-hoc signed but not Apple-notarized. On first launch, macOS Gatekeeper may require manual approval in System Settings or via right-click Open.
+
+The public download is the full desktop pet package built with `npm run release:mac`. The optional Cloud `/client` wrapper is a separate chat/call client package and is not the default public desktop pet download.
 
 ## What It Does
 
@@ -214,7 +216,7 @@ docs/
 | Diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
 | Focus Pet Cloud | [docs/focus-pet-cloud.md](docs/focus-pet-cloud.md) |
 | Optimization plan | [docs/optimization-plan.md](docs/optimization-plan.md) |
-| Release notes | [docs/releases/v1.0.1.md](docs/releases/v1.0.1.md) |
+| Release notes | [docs/releases/v1.0.3.md](docs/releases/v1.0.3.md) |
 
 ## Development Notes
 

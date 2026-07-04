@@ -350,8 +350,8 @@ FOCUS_PET_RTC_ICE_SERVERS
 - 被控制端的 `/api/state` 中 `activities` 恒为空对象，`activityLog` 恒为空数组。
 - 被控制端不会收到 WebSocket `activity` 事件。
 - 被控制端消息列表里的 `messages[*].activity` 恒为 `null`，不能通过消息回读对方或自己的截图分析。
-- 被控制端发布包不渲染“对方正在做什么”或截图分析面板。
-- 公开发布使用 `npm run release:mac:controlled` 生成被控制端 DMG/ZIP/manifest；完整桌面端保留为本地控制端/开发端。
+- 可选远端聊天/通话客户端不渲染“对方正在做什么”或截图分析面板。
+- 普通公开下载使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest。`npm run release:mac:controlled` 只用于可选远端聊天/通话客户端，不作为默认公开桌宠包。
 
 ## 5. 权限与隐私边界
 
@@ -417,7 +417,7 @@ CLI 参数同时支持等号写法，例如 `npm run release:preflight -- --run=
 
 `release:preflight` 的 full 模式在 fast gate 之后继续执行 `npm run verify:pet-render` 和 `npm run test:screen-pipeline`。后者用于发布前确认手动屏幕分析、结构化 LLM 输出和复盘 LLM 串联；运行时需要屏幕检查和复盘 LLM 配置可用。
 
-`release:preflight` 的 package 模式在 macOS 上包含 `npm run package:mac`、`npm run sign:mac && npm run verify:mac` 和 `npm run notarize:mac && npm run verify:mac`；公证需要 Apple ID、Team ID 和 App 专用密码，staple 后会再次执行 Gatekeeper/签名验证。公开分发应使用被控制端 release：部署 HTTPS 客户端并设置 `REMOTE_CLIENT_URL` 后单独执行 `npm run release:mac:controlled`，其中 URL 必须指向 `/client` 或 `/client/...` 路径；打包出的客户端只向与该 URL 精确同源的页面授予麦克风/摄像头权限，内嵌导航只保留同源 `/client` 页面，跳出范围的 http/https 导航交给系统浏览器，非 http/https 外链会被拒绝打开；该步骤不随 `--run package` 自动运行。`npm run package:mac:controlled` 仍可单独生成 `.app`，`npm run package:mac:remote-client` 作为同一打包器的兼容别名保留。Windows package 模式包含 `npm run package:win`，需要在 Windows 环境执行。
+`release:preflight` 的 package 模式在 macOS 上包含 `npm run package:mac`、`npm run sign:mac && npm run verify:mac` 和 `npm run notarize:mac && npm run verify:mac`；公证需要 Apple ID、Team ID 和 App 专用密码，staple 后会再次执行 Gatekeeper/签名验证。普通公开下载的完整桌宠 release 应单独执行 `npm run release:mac`，生成 DMG/ZIP/manifest。可选远端聊天/通话客户端 release 需要先部署 HTTPS `/client` 并设置 `REMOTE_CLIENT_URL`，再单独执行 `npm run release:mac:controlled`，其中 URL 必须指向 `/client` 或 `/client/...` 路径；打包出的客户端只向与该 URL 精确同源的页面授予麦克风/摄像头权限，内嵌导航只保留同源 `/client` 页面，跳出范围的 http/https 导航交给系统浏览器，非 http/https 外链会被拒绝打开；该步骤不随 `--run package` 自动运行。`npm run package:mac:controlled` 仍可单独生成 `.app`，`npm run package:mac:remote-client` 作为同一打包器的兼容别名保留。Windows package 模式包含 `npm run package:win`，需要在 Windows 环境执行。
 
 ### 6.4 打包
 

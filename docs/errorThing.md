@@ -10562,3 +10562,52 @@
 - 上下文：准备创建新 GitHub Release 前检查已有 v1.0.1 资产，首次命令返回 Unknown JSON field: "isLatest"；随后改用 tagName、name、createdAt、publishedAt、url、assets、targetCommitish 字段成功查询。
 - 可能原因：当前 gh 2.88.1 的 release view JSON 字段集合不包含 isLatest。
 - 解决状态：已解决
+
+## [2026-07-04 22:09:33 CST]
+- 问题描述：读取 macOS 打包和调试技能文件时首次使用了旧缓存路径，cat 返回 No such file or directory。
+- 发生位置：/Users/sxlx/.codex/plugins/cache/openai-curated/.../3fdeeb49/skills
+- 上下文：本轮需要使用 packaging-notarization、systematic-debugging 和 test-driven-development 技能，初次按旧 hash 路径读取失败；随后通过 rg --files 定位到当前 d6169bef 缓存路径。
+- 可能原因：Codex 技能插件缓存版本更新，旧 hash 目录已不存在。
+- 解决状态：已解决
+
+## [2026-07-04 22:12:15 CST]
+- 问题描述：新增发布包边界测试后红灯，公开下载文档仍指向旧版本且远端客户端 release 资产名仍伪装成普通 Focus Pet。
+- 发生位置：test/core.test.js public download docs point to the full desktop pet release / remote client release assets are clearly separated
+- 上下文：执行 targeted node --test 时，README 仍为 v1.0.1，docs 仍描述公开发布使用 release:mac:controlled，package.json 的 release:mac:controlled 仍设置 APP_NAME="Focus Pet"。
+- 可能原因：上一版发布使用了远端 /client 打包脚本但保持普通应用名，导致用户下载后看到普通 Electron 网页窗口而不是桌宠。
+- 解决状态：未解决
+
+## [2026-07-04 22:09:13 CST]
+- 问题描述：后台执行 `nohup npm start` 后没有保持 Focus Pet 运行，未产生新的 Electron 子进程。
+- 发生位置：项目启动流程 / `npm start` 后台启动尝试
+- 上下文：先用 `npm run stop` 停止前台实例后，尝试通过 `nohup npm start > /tmp/focus-pet-npm-start.log 2>&1 &` 后台启动；返回 PID 54576 后进程很快退出，`/tmp/focus-pet-npm-start.log` 为空，`~/.hermes/focus-watchdog/focus-pet.stop` 仍存在。
+- 可能原因：当前执行环境对短生命周期 shell 的后台子进程保活不稳定，或 stop 标记与后台启动时序冲突。
+- 解决状态：未解决
+
+## [2026-07-04 22:09:54 CST]
+- 问题描述：后台 `nohup npm start` 未保活的问题已通过 macOS Launch Services 启动方式绕过。
+- 发生位置：项目启动流程 / Electron 启动
+- 上下文：删除 `~/.hermes/focus-watchdog/focus-pet.stop` 后，执行 `open -na node_modules/electron/dist/Electron.app --args /Users/sxlx/focus-pet`，确认 Electron 主进程和 Renderer/GPU/Network 子进程均已运行。
+- 可能原因：当前环境更适合由 macOS `open` 接管 GUI 应用生命周期，而不是由短生命周期 shell 后台保活。
+- 解决状态：已解决
+
+## [2026-07-04 22:17:11 CST]
+- 问题描述：排查旧发布文案时，shell 将 `rg` 正则中的反引号内容误执行为 `npm run release:mac:controlled`，随后因缺少 `REMOTE_CLIENT_URL` 失败。
+- 发生位置：本地排查命令；`scripts/package-remote-client-macos.js`
+- 上下文：并行执行 targeted test、文案扫描和 diff 时，文案扫描命令包含未转义反引号，zsh 对反引号内容做了命令替换。
+- 可能原因：命令参数没有用单引号包裹，导致 Markdown 风格反引号被 shell 解释。
+- 解决状态：已解决
+
+## [2026-07-04 22:17:55 CST]
+- 问题描述：新增发布包边界测试后红灯，公开下载文档仍指向旧版本且远端客户端 release 资产名仍伪装成普通 Focus Pet。
+- 发生位置：test/core.test.js public download docs point to the full desktop pet release / remote client release assets are clearly separated
+- 上下文：README 和中英文下载说明已更新到 v1.0.3，Cloud/系统/社交边界文档已说明默认公开下载走完整桌宠 `npm run release:mac`，远端 `/client` 包已独立为 `Focus Pet Client`；targeted tests 已通过。
+- 可能原因：已补发布文档边界、脚本命名边界和回归测试，避免再次把 `/client` 包作为普通桌宠 release 发布。
+- 解决状态：已解决
+
+## [2026-07-04 22:19:42 CST]
+- 问题描述：Modal Cloud 部署后首次 `/healthz` 健康检查超时。
+- 发生位置：`curl https://reecewong520--focus-pet-cloud-cloud.modal.run/healthz`
+- 上下文：`npm run cloud:deploy:modal` 已成功创建 v7 部署，但第一次 20 秒健康检查和第二次 60 秒健康检查都未收到响应；随后查看 Modal 日志显示函数正在等待 CPU worker 调度，复测 90 秒健康检查返回 ok=true，且 `screenCheck.enabled=true`。
+- 可能原因：Modal 部署后新函数实例排队等待 CPU worker，不是 Cloud 服务代码异常。
+- 解决状态：已解决
