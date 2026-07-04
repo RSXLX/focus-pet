@@ -10611,3 +10611,24 @@
 - 上下文：`npm run cloud:deploy:modal` 已成功创建 v7 部署，但第一次 20 秒健康检查和第二次 60 秒健康检查都未收到响应；随后查看 Modal 日志显示函数正在等待 CPU worker 调度，复测 90 秒健康检查返回 ok=true，且 `screenCheck.enabled=true`。
 - 可能原因：Modal 部署后新函数实例排队等待 CPU worker，不是 Cloud 服务代码异常。
 - 解决状态：已解决
+
+## [2026-07-04 22:26:23 CST]
+- 问题描述：创建 GitHub Release 时传入短 commit SHA，GitHub API 返回 `Release.target_commitish is invalid`。
+- 发生位置：`gh release create v1.0.3 --target b349c9a`
+- 上下文：v1.0.3 tag 已推送，首次创建 release 使用了短 SHA；随后改用完整 commit SHA `b349c9ae1dcc072e4360268c5993eea8bed64a26` 成功创建 draft release。
+- 可能原因：GitHub Release API 对 `target_commitish` 的短 SHA 解析不稳定，release 创建应使用完整 SHA 或分支名。
+- 解决状态：已解决
+
+## [2026-07-04 22:39:24 CST]
+- 问题描述：`gh release create/upload` 上传大体积 DMG/ZIP 资产长时间无输出且 GitHub 端资产未出现。
+- 发生位置：`gh release create v1.0.3`；`gh release upload v1.0.3 Focus-Pet-1.0.3-mac-arm64.zip`
+- 上下文：`gh release create` 只上传了 manifest 后卡住，单独 `gh release upload` ZIP 运行数分钟仍未创建资产；中断后改用 GitHub uploads API 直接上传 ZIP 和 DMG，GitHub 返回的 digest 与本地 shasum 一致。
+- 可能原因：当前网络环境下 gh CLI 大文件 release asset 上传无进度且可能卡住；直接调用 uploads API 可观察进度并完成上传。
+- 解决状态：已解决
+
+## [2026-07-04 22:48:23 CST]
+- 问题描述：查询 GitHub Release 时再次使用了当前 gh CLI 不支持的 JSON 字段 `isLatest`。
+- 发生位置：`gh release view v1.0.3 --json ... isLatest`
+- 上下文：发布完成后做远端校验，命令返回 Unknown JSON field；随后改用支持的 `tagName`、`name`、`publishedAt`、`url`、`targetCommitish`、`isDraft` 和 `assets` 字段重新查询。
+- 可能原因：当前 gh CLI 版本不支持 `isLatest` 字段，和此前 v1.0.1 查询时的限制一致。
+- 解决状态：已解决
