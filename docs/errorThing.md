@@ -42,6 +42,41 @@
 
 ## 新增记录
 
+## [2026-07-07 10:31:00 CST]
+- 问题描述：此前 Modal Cloud 线上 `/healthz` 报告 `turn-missing`，导致跨网络语音/视频发布门禁无法通过。
+- 发生位置：Metered TURN Dashboard / `focus-pet-cloud-turn` Modal Secret / `scripts/verify-cloud-turn.js`
+- 上下文：进入 Metered 的 `focus-pet-chat` 应用，启用 $0 TURN Trial plan，生成 `focus-pet-cloud` TURN credential，创建独立 Modal Secret `focus-pet-cloud-turn`，重新部署 Focus Pet Cloud。
+- 可能原因：之前只部署了 Cloud HTTP/WebSocket 后端，没有将真实 TURN relay 的 ICE 配置注入 Modal 运行环境。
+- 解决状态：已解决（`cloud-health` 返回 `rtc.hasTurn=true`；完整 `npm run cloud:turn:verify` 返回 5 个 ICE URL、4 个 TURN、2 个 TCP TURN 可达）
+
+## [2026-07-06 22:31:00 CST]
+- 问题描述：重新部署 Modal Cloud 后，`node scripts/release-preflight.js --check cloud-health` 和 `npm run cloud:turn:verify` 仍失败，分别报告 `turn-missing`、`turn-missing-health` 和 `turn-missing-api-ice`。
+- 发生位置：`scripts/release-preflight.js --check cloud-health` / `scripts/verify-cloud-turn.js` / `https://reecewong520--focus-pet-cloud-cloud.modal.run`
+- 上下文：用户要求先不做 Apple 签名和公证，改为推进 TURN 在 Modal 上的部署和本地验证。本次已部署最新 Cloud 代码，线上 `/healthz` 返回 Cloud 与 StepFun 均可用，但 RTC 仍只下发默认 STUN。
+- 可能原因：Modal 当前部署未配置有效 `FOCUS_PET_CLOUD_RTC_ICE_SERVERS`；Modal Web Endpoint 适合 HTTP/WebSocket，不等价于可稳定开放 TURN TCP/UDP 与 relay 端口的 TURN relay。
+- 解决状态：未解决
+
+## [2026-07-06 21:11:42 CST]
+- 问题描述：执行 `node scripts/release-preflight.js --check cloud-health` 返回失败，发布门禁报告 `turn-missing`。
+- 发生位置：`scripts/release-preflight.js --check cloud-health` / `https://reecewong520--focus-pet-cloud-cloud.modal.run/healthz`
+- 上下文：继续推进开发闭环时验证 Phase 3 TURN 状态；返回结果显示 `screenCheck.enabled=true` 且 StepFun 配置可用，但 `rtc.hasTurn=false`。
+- 可能原因：Modal Secret 尚未配置有效 `FOCUS_PET_CLOUD_RTC_ICE_SERVERS` TURN 服务，只使用默认 STUN。
+- 解决状态：已解决（门禁按预期阻断公开发布；实际跨网络通话仍需配置 TURN 后重新部署）
+
+## [2026-07-06 19:18:00 CST]
+- 问题描述：开发 Cloud 桌面接入时，定向测试因旧公开文案断言和 release preflight full 列表未包含 `cloud-health` 红灯。
+- 发生位置：`test/core.test.js` / `src/index.html` / `scripts/release-preflight.js`
+- 上下文：执行 `node --test --test-name-pattern "settings store normalizes|desktop Cloud client|desktop pet wires Focus Pet Cloud|release preflight checklist|settings page is layered|external chat supports realtime voice" test/core.test.js`。
+- 可能原因：公开 UI 已从“控制端/被控制端”收敛为“好友可见性”，且新增 Cloud health 发布门禁后测试期望未同步。
+- 解决状态：已解决（同步测试期望后同一组定向测试通过）
+
+## [2026-07-06 19:01:24 CST]
+- 问题描述：审计 Focus Pet Cloud 闭环时误用 `/api/health` 做健康检查，`curl -fsS` 返回 401。
+- 发生位置：`https://reecewong520--focus-pet-cloud-cloud.modal.run/api/health`
+- 上下文：验证线上 Cloud 当前状态，随后改用公开健康检查入口 `/healthz`。
+- 可能原因：健康检查入口路径记忆错误；`/api/*` 下的业务接口存在认证边界或路由差异。
+- 解决状态：已解决（`/healthz` 返回 `ok=true`，屏幕检查配置可用；RTC 健康摘要显示 TURN 尚未配置）
+
 ## [2026-06-28 12:39:16 CST]
 - 问题描述：整理错误 Markdown 前执行 `git status --short` 时返回 `fatal: not a git repository (or any of the parent directories): .git`。
 - 发生位置：`/Users/sxlx/focus-pet`

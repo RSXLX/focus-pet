@@ -343,15 +343,15 @@ FOCUS_PET_RTC_ICE_SERVERS
 7. 首次通话前确认 WebRTC 网络提示。
 8. 可通过 WebRTC 进行实时语音或视频通话。
 
-控制端 / 被控制端边界：
+Owner / Peer 边界：
 
-- 控制端是 owner，本机可查看被控制端提交的完整活动快照和屏幕分析结果。
-- 被控制端是 peer，公开下载包只提供加入会话、文字/媒体消息、语音消息和 WebRTC 语音/视频。
-- 被控制端的 `/api/state` 中 `activities` 恒为空对象，`activityLog` 恒为空数组。
-- 被控制端不会收到 WebSocket `activity` 事件。
-- 被控制端消息列表里的 `messages[*].activity` 恒为 `null`，不能通过消息回读对方或自己的截图分析。
+- Owner 是本机账户，本机可查看自己选择保留的完整活动快照和屏幕分析结果。
+- Peer 是远端好友客户端，只提供加入会话、文字/媒体消息、语音消息和 WebRTC 语音/视频。
+- Peer 的 `/api/state` 中 `activities` 恒为空对象，`activityLog` 恒为空数组。
+- Peer 不会收到 WebSocket `activity` 事件。
+- Peer 消息列表里的 `messages[*].activity` 恒为 `null`，不能通过消息回读对方或自己的截图分析。
 - 可选远端聊天/通话客户端不渲染“对方正在做什么”或截图分析面板。
-- 普通公开下载使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest。`npm run release:mac:controlled` 只用于可选远端聊天/通话客户端，不作为默认公开桌宠包。
+- 普通公开下载使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest。`npm run release:mac:remote-client` 只用于可选远端聊天/通话客户端，不作为默认公开桌宠包。
 
 ## 5. 权限与隐私边界
 
@@ -374,7 +374,7 @@ FOCUS_PET_RTC_ICE_SERVERS
 
 只有手动触发屏幕检查或开启定时屏幕检查后，才会截取屏幕缩略图并发送给 StepFun 或用户配置的 LLM endpoint。用户需要自行确认该 endpoint 的数据策略。
 
-社交监督的活动与截图分析只进入控制端本机视图。被控制端不会从 `/api/state`、WebSocket `activity` 事件或消息列表回读对方或自己的截图分析结果；出站过滤在聊天服务端执行。
+社交监督的活动与截图分析只进入 owner 本机视图。Peer 不会从 `/api/state`、WebSocket `activity` 事件或消息列表回读对方或自己的截图分析结果；出站过滤在聊天服务端执行。
 
 macOS 需要辅助功能权限读取前台窗口；屏幕检查还需要屏幕录制权限。
 
@@ -417,7 +417,7 @@ CLI 参数同时支持等号写法，例如 `npm run release:preflight -- --run=
 
 `release:preflight` 的 full 模式在 fast gate 之后继续执行 `npm run verify:pet-render` 和 `npm run test:screen-pipeline`。后者用于发布前确认手动屏幕分析、结构化 LLM 输出和复盘 LLM 串联；运行时需要屏幕检查和复盘 LLM 配置可用。
 
-`release:preflight` 的 package 模式在 macOS 上包含 `npm run package:mac`、`npm run sign:mac && npm run verify:mac` 和 `npm run notarize:mac && npm run verify:mac`；公证需要 Apple ID、Team ID 和 App 专用密码，staple 后会再次执行 Gatekeeper/签名验证。普通公开下载的完整桌宠 release 应单独执行 `npm run release:mac`，生成 DMG/ZIP/manifest。可选远端聊天/通话客户端 release 需要先部署 HTTPS `/client` 并设置 `REMOTE_CLIENT_URL`，再单独执行 `npm run release:mac:controlled`，其中 URL 必须指向 `/client` 或 `/client/...` 路径；打包出的客户端只向与该 URL 精确同源的页面授予麦克风/摄像头权限，内嵌导航只保留同源 `/client` 页面，跳出范围的 http/https 导航交给系统浏览器，非 http/https 外链会被拒绝打开；该步骤不随 `--run package` 自动运行。`npm run package:mac:controlled` 仍可单独生成 `.app`，`npm run package:mac:remote-client` 作为同一打包器的兼容别名保留。Windows package 模式包含 `npm run package:win`，需要在 Windows 环境执行。
+`release:preflight` 的 package 模式在 macOS 上包含 `npm run package:mac`、`npm run sign:mac && npm run verify:mac` 和 `npm run notarize:mac && npm run verify:mac`；公证需要 Apple ID、Team ID 和 App 专用密码，staple 后会再次执行 Gatekeeper/签名验证。普通公开下载的完整桌宠 release 应单独执行 `npm run release:mac`，生成 DMG/ZIP/manifest。可选远端聊天/通话客户端 release 需要先部署 HTTPS `/client` 并设置 `REMOTE_CLIENT_URL`，再单独执行 `npm run release:mac:remote-client`，其中 URL 必须指向 `/client` 或 `/client/...` 路径；打包出的客户端只向与该 URL 精确同源的页面授予麦克风/摄像头权限，内嵌导航只保留同源 `/client` 页面，跳出范围的 http/https 导航交给系统浏览器，非 http/https 外链会被拒绝打开；该步骤不随 `--run package` 自动运行。`npm run package:mac:remote-client` 可单独生成 `.app`。Windows package 模式包含 `npm run package:win`，需要在 Windows 环境执行。
 
 ### 6.4 打包
 

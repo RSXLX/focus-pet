@@ -108,12 +108,12 @@ FOCUS_PET_CHAT_ALLOWED_ORIGINS="https://chat.example.com,https://app.example.com
 - 媒体 ID 只取 basename 后映射到 `media/` 目录。
 - 媒体 URL 可带 `token` 查询参数，供浏览器图片、音频和视频标签读取。
 
-## 8. 控制端 / 被控制端活动边界
+## 8. Owner / Peer 活动边界
 
-Focus Pet 的公开分发边界改为两端模型：
+Focus Pet 的公开分发边界按 owner / peer 两端模型执行：
 
-- 控制端：owner，本机运行在开发者/监督者设备上，可以查看被控制端提交的完整活动快照、屏幕分析摘要、截图媒体引用和本机复盘数据。
-- 被控制端：peer，面向公开下载用户，只用于加入会话、文字/媒体消息、语音消息和 WebRTC 语音/视频；不接收任何对方活动快照、截图分析摘要或活动历史。
+- Owner：本机账户，可以查看自己选择保留的完整活动快照、屏幕分析摘要、截图媒体引用和本机复盘数据。
+- Peer：远端好友客户端，只用于加入会话、文字/媒体消息、语音消息和 WebRTC 语音/视频；不接收任何对方活动快照、截图分析摘要或活动历史。
 
 服务端强制执行该边界，不依赖前端隐藏字段：
 
@@ -122,8 +122,8 @@ Focus Pet 的公开分发边界改为两端模型：
 - peer 的 `messages[*].activity` 恒为 `null`，避免通过消息列表绕过活动边界。
 - peer 即使自己提交活动快照，也不会从服务端回读活动结果；该结果只进入 owner 本机视图。
 - owner 调用本机状态接口或 WebSocket 时，仍保留完整活动数据，用于本机监督、复盘和诊断。
-- 可选远端被控制端客户端不渲染“对方正在做什么”或截图分析面板。
-- 普通公开下载使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；远端被控制端客户端只作为可选聊天/通话包，通过 `npm run release:mac:controlled` 单独构建。
+- 可选远端聊天/通话客户端不渲染“对方正在做什么”或截图分析面板。
+- 普通公开下载使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；远端聊天/通话客户端只作为可选包，通过 `npm run release:mac:remote-client` 单独构建。
 
 本文档不引入隐私模式、敏感 App 列表、窗口标题脱敏或用户纠错机制。
 

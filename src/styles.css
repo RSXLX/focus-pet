@@ -1677,6 +1677,63 @@ select, .chat-compose input { flex: 1; min-height: 34px; padding: 9px 11px; bord
 .chat-header { display: none; }
 .friend-row, .chat-tools { flex: 0 0 auto; margin-top: 7px; }
 .chat-panel .chat-compose { flex: 0 0 auto; margin-top: 7px; }
+.cloud-chat-account {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 7px;
+  margin: 0 -2px 7px;
+  padding: 8px;
+  border: 1px solid rgba(33,45,78,0.08);
+  border-radius: 8px;
+  background: #f7f7f7;
+}
+.cloud-chat-account[hidden] {
+  display: none !important;
+}
+.cloud-chat-identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.cloud-chat-identity span,
+.cloud-chat-identity b {
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cloud-chat-identity span {
+  color: rgba(24,32,51,0.66);
+  font-size: 11px;
+  font-weight: 850;
+}
+.cloud-chat-identity b {
+  color: #16823a;
+  font-size: 11px;
+  font-weight: 950;
+  text-align: right;
+}
+.cloud-chat-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto auto;
+  gap: 6px;
+  min-width: 0;
+}
+.cloud-chat-actions input {
+  min-width: 0;
+  height: 30px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.cloud-chat-actions button {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
 .friend-row {
   align-items: stretch;
   margin: 0 -2px 0;

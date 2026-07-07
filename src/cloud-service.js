@@ -354,9 +354,16 @@ function recordCloudRealtimeAudit(event = {}, deliveredCount = 0, options = {}) 
   return { entry, state };
 }
 
-function rtcIceServers(env = process.env) {
+function parseRtcIceServers(env = process.env) {
   const raw = String(env.FOCUS_PET_CLOUD_RTC_ICE_SERVERS || env.FOCUS_PET_RTC_ICE_SERVERS || '').trim();
-  if (!raw) return DEFAULT_RTC_ICE_SERVERS;
+  if (!raw) {
+    return {
+      configured: false,
+      configValid: true,
+      configError: '',
+      servers: DEFAULT_RTC_ICE_SERVERS
+    };
+  }
   try {
     const parsed = JSON.parse(raw);
     const list = Array.isArray(parsed) ? parsed : [parsed];
@@ -368,10 +375,32 @@ function rtcIceServers(env = process.env) {
         ...(item.credential ? { credential: String(item.credential) } : {})
       }))
       .filter(item => typeof item.urls === 'string' || Array.isArray(item.urls));
-    return normalized.length ? normalized : DEFAULT_RTC_ICE_SERVERS;
+    if (!normalized.length) {
+      return {
+        configured: true,
+        configValid: false,
+        configError: 'no-valid-ice-servers',
+        servers: DEFAULT_RTC_ICE_SERVERS
+      };
+    }
+    return {
+      configured: true,
+      configValid: true,
+      configError: '',
+      servers: normalized
+    };
   } catch {
-    return DEFAULT_RTC_ICE_SERVERS;
+    return {
+      configured: true,
+      configValid: false,
+      configError: 'invalid-json',
+      servers: DEFAULT_RTC_ICE_SERVERS
+    };
   }
+}
+
+function rtcIceServers(env = process.env) {
+  return parseRtcIceServers(env).servers;
 }
 
 function flattenIceUrls(serverList) {
@@ -379,14 +408,16 @@ function flattenIceUrls(serverList) {
 }
 
 function rtcIceServerSummary(env = process.env) {
-  const configured = Boolean(String(env.FOCUS_PET_CLOUD_RTC_ICE_SERVERS || env.FOCUS_PET_RTC_ICE_SERVERS || '').trim());
-  const servers = rtcIceServers(env);
+  const config = parseRtcIceServers(env);
+  const servers = config.servers;
   const urls = flattenIceUrls(servers);
   const stunCount = urls.filter(url => /^stuns?:/i.test(url)).length;
   const turnCount = urls.filter(url => /^turns?:/i.test(url)).length;
   return {
-    configured,
-    usingDefault: !configured,
+    configured: config.configured,
+    configValid: config.configValid,
+    configError: config.configError,
+    usingDefault: !config.configured || !config.configValid,
     serverCount: urls.length,
     stunCount,
     turnCount,

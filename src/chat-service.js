@@ -55,8 +55,8 @@ const ALLOWED_FILE_EXTENSIONS = new Set([
 ]);
 const OWNER_ROLE = 'owner';
 const PEER_ROLE = 'peer';
-const CONTROLLER_MODE = 'controller';
-const CONTROLLED_MODE = 'controlled';
+const OWNER_APP_MODE = 'owner';
+const PEER_APP_MODE = 'peer';
 const ACTIVITY_STATUSES = new Set(['work', 'study', 'rest', 'game', 'distracted', 'unknown']);
 const DEFAULT_RTC_ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 const REALTIME_EVENTS = new Set([
@@ -906,17 +906,17 @@ function clientStateForAuth(auth, inputState = loadState(), options = {}) {
   };
   const base = {
     version: state.version || CHAT_STATE_VERSION,
-    appMode: auth?.role === PEER_ROLE ? CONTROLLED_MODE : CONTROLLER_MODE,
+    appMode: auth?.role === PEER_ROLE ? PEER_APP_MODE : OWNER_APP_MODE,
     capabilities: auth?.role === PEER_ROLE
       ? {
-          role: CONTROLLED_MODE,
-          receivesPeerScreenAnalysis: false,
+          role: PEER_APP_MODE,
+          receivesActivitySnapshots: false,
           canPublishOwnActivity: true,
           canUseChatAndCalls: true
         }
       : {
-          role: CONTROLLER_MODE,
-          receivesControlledScreenAnalysis: true,
+          role: OWNER_APP_MODE,
+          receivesRemoteActivitySnapshots: true,
           canViewFullActivitySnapshots: true,
           canUseChatAndCalls: true
         },

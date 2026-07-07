@@ -18,20 +18,20 @@ Focus Pet is a medium-privacy desktop pet app for people who want lightweight fo
 ## Project Status
 
 - Public repository: [RSXLX/focus-pet](https://github.com/RSXLX/focus-pet)
-- Current release: [v1.0.3](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3)
+- Current release: [v1.1.0](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0)
 - Published binary: macOS Apple Silicon DMG and ZIP
 - Source support: macOS and Windows development scripts are included
 - Signing status: public macOS builds are ad-hoc signed and not Apple-notarized yet
 
 ## Downloads
 
-Latest release: [v1.0.3](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3)
+Latest release: [v1.1.0](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0)
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3) | Download the DMG for the full desktop pet app. |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3) | ZIP archive is also available. |
-| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.0.3) | SHA-256 manifest is included. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0) | Download the DMG for the full desktop pet app. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0) | ZIP archive is also available. |
+| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0) | SHA-256 manifest is included. |
 
 macOS note: the current public build is ad-hoc signed but not Apple-notarized. On first launch, macOS Gatekeeper may require manual approval in System Settings or via right-click Open.
 
@@ -44,9 +44,9 @@ The public download is the full desktop pet package built with `npm run release:
 - Task system: current task, priority, deadline, next step, blocker, related apps, and related keywords.
 - Pet feedback: mood, energy, bond, care actions, full-body animations, and chat GIF sharing.
 - Daily review: local 24-hour review with focus minutes, drift windows, task friction, and next actions.
-- Optional screen check: disabled by default; can use Focus Pet Cloud as a server-side StepFun proxy so downloaded apps do not embed API keys; sends low-detail screenshots only when explicitly enabled or manually tested.
+- Optional screen check: disabled by default; can use Focus Pet Cloud as a server-side StepFun proxy so downloaded apps do not embed API keys; results stay local unless screen-summary sharing is explicitly enabled.
 - Optional local social chat: invite links, web client, media messages, pet GIFs, and WebRTC signaling.
-- Optional Focus Pet Cloud backend: stable user IDs, friend codes, authenticated WebSocket signaling, one-to-one WebRTC voice/video calls, and server-side screen check proxying.
+- Focus Pet Cloud account and calls: the desktop pet can create a stable user ID, show a friend code, add a friend code, and use authenticated WebSocket signaling for one-to-one WebRTC voice/video calls.
 - Update notifications: checks the GitHub Release feed and notifies when a newer DMG/ZIP is available; installation remains user-driven.
 - Low-memory runtime: optional chat, diagnostics, screen check, LLM self-check, WebSocket, and GIF previews load on demand.
 
@@ -76,10 +76,10 @@ Optional capabilities such as screen check, LLM review, external chat, and WebRT
 
 ## Social Chat Modes
 
-Focus Pet separates asynchronous companion chat from realtime calls:
+Focus Pet separates local companion chat from Cloud realtime calls:
 
 - WeChat-style compact chat window (`微信式小聊天窗口`): supports text, media messages, pet GIF sharing, and voice messages (`语音消息`) recorded through `MediaRecorder`. The desktop UI supports press-and-hold recording (`按住说话`) and the voice shortcut (`语音快捷键`) `Alt+R`.
-- Realtime calls: realtime voice chat (`实时语音聊天`) and realtime video chat (`实时视频聊天`) use WebRTC. Session setup uses WebSocket signaling (`WebSocket 信令`), and TURN can be configured for NAT traversal.
+- Cloud realtime calls: realtime voice chat (`实时语音聊天`) and realtime video chat (`实时视频聊天`) use WebRTC. Session setup uses authenticated WebSocket signaling (`WebSocket 信令`), and TURN must be configured for reliable NAT traversal.
 
 For public multi-user distribution, use Focus Pet Cloud instead of exposing each desktop directly. It provides stable user IDs, friend-code pairing, device-bound auth tokens, authenticated WebSocket signaling, and ICE/TURN configuration for one-to-one WebRTC voice/video. See [Focus Pet Cloud](docs/focus-pet-cloud.md).
 
@@ -118,13 +118,15 @@ Release preflight keeps the public build, diagnostics output, and privacy bounda
 ```bash
 node scripts/release-preflight.js --check diagnostics-summary-output
 node scripts/release-preflight.js --check diagnostics-bundle-output
+node scripts/release-preflight.js --check cloud-health
+npm run cloud:smoke
 node scripts/release-preflight.js --check error-log
 node scripts/release-preflight.js --run=fast
 ```
 
 The `diagnostics-summary-output` gate validates `summarySchemaValid`, `summaryGeneratedAtValid`, `未知顶层字段数量`, secret-field checks such as `json-secret-field`, raw-field protection from `rawIssueKey` to `json-raw-field`, empty acceptance checks such as `emptyAcceptanceSections`, and key naming consistency between `snake_case` and `kebab-case`. Output marked `未通过` must be fixed before release, including diagnostic labels that contain 冒号、括号、破折号或空格.
 
-The `diagnostics-bundle-output` gate checks `summaryBoundaryIssues` and `summarySchemaValid`. The `error-log` gate reports `openUnresolvedEntries`. The 诊断包 includes the 最新 20 个 relevant error records for review without exposing high-sensitivity content.
+The `diagnostics-bundle-output` gate checks `summaryBoundaryIssues` and `summarySchemaValid`. The `cloud-health` gate checks Focus Pet Cloud `/healthz`, including server-side screen checks, TURN JSON validity, and TURN readiness. `npm run cloud:smoke` is a manual production smoke test that creates two temporary Cloud users, pairs them, opens WSS, sends one call invite, and calls `/api/screen-check`; it is not part of automatic preflight because it writes production Cloud data. The `error-log` gate reports `openUnresolvedEntries`. The 诊断包 includes the 最新 20 个 relevant error records for review without exposing high-sensitivity content.
 
 ## Build Release Assets
 
@@ -150,6 +152,8 @@ APPLE_TEAM_ID="TEAMID" \
 APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx" \
 npm run notarize:mac
 ```
+
+`npm run verify:mac` validates codesign, Gatekeeper, and the stapled notarization ticket; it exits non-zero if any public-release gate fails.
 
 Windows unpacked build:
 
@@ -216,7 +220,7 @@ docs/
 | Diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
 | Focus Pet Cloud | [docs/focus-pet-cloud.md](docs/focus-pet-cloud.md) |
 | Optimization plan | [docs/optimization-plan.md](docs/optimization-plan.md) |
-| Release notes | [docs/releases/v1.0.3.md](docs/releases/v1.0.3.md) |
+| Release notes | [docs/releases/v1.1.0.md](docs/releases/v1.1.0.md) |
 
 ## Development Notes
 

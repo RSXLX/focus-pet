@@ -9,6 +9,7 @@ CLOUD_PORT = 47821
 DATA_MOUNT = "/data"
 DATA_DIR = f"{DATA_MOUNT}/focus-pet-cloud"
 STEPFUN_SECRET_NAME = "focus-pet-cloud-stepfun"
+TURN_SECRET_NAME = "focus-pet-cloud-turn"
 
 
 def ignore_local_path(path):
@@ -32,7 +33,10 @@ def ignore_local_path(path):
 app = modal.App("focus-pet-cloud")
 
 data_volume = modal.Volume.from_name("focus-pet-cloud-data", create_if_missing=True)
-modal_secrets = [modal.Secret.from_name(STEPFUN_SECRET_NAME)]
+modal_secrets = [
+    modal.Secret.from_name(STEPFUN_SECRET_NAME),
+    modal.Secret.from_name(TURN_SECRET_NAME),
+]
 cloud_env = {
     "FOCUS_PET_CLOUD_HOST": "0.0.0.0",
     "FOCUS_PET_CLOUD_PORT": str(CLOUD_PORT),
@@ -41,6 +45,7 @@ cloud_env = {
 
 for key in (
     "FOCUS_PET_CLOUD_PUBLIC_URL",
+    "FOCUS_PET_CLOUD_RTC_ICE_SERVERS",
     "FOCUS_PET_CLOUD_SCREEN_LLM_ENDPOINT",
     "FOCUS_PET_CLOUD_STEPFUN_ENDPOINT",
     "FOCUS_PET_CLOUD_SCREEN_LLM_MODEL",

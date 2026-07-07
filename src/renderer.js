@@ -83,6 +83,14 @@ const peerActivityMeta = document.querySelector('#peerActivityMeta');
 const peerActivityLog = document.querySelector('#peerActivityLog');
 const chatCompose = document.querySelector('.chat-compose');
 const chatInput = document.querySelector('#chatInput');
+const cloudChatAccount = document.querySelector('#cloudChatAccount');
+const cloudChatStatus = document.querySelector('#cloudChatStatus');
+const cloudFriendCode = document.querySelector('#cloudFriendCode');
+const cloudDisplayName = document.querySelector('#cloudDisplayName');
+const cloudRegisterButton = document.querySelector('#cloudRegisterButton');
+const cloudFriendCodeInput = document.querySelector('#cloudFriendCodeInput');
+const cloudAddFriendButton = document.querySelector('#cloudAddFriendButton');
+const cloudRefreshButton = document.querySelector('#cloudRefreshButton');
 const voiceModeButton = document.querySelector('#voiceModeButton');
 const textModeButton = document.querySelector('#textModeButton');
 const voiceRecordButton = document.querySelector('#voiceRecordButton');
@@ -675,7 +683,7 @@ let chatSocket;
 let chatPingTimer;
 let chatReconnectTimer;
 let chatSocketEnabled = false;
-let chatState = { friends: [], messages: [], activities: {}, activityLog: [], self: { id: 'pet-owner', name: '我' }, port: 47321, authToken: '' };
+let chatState = { source: 'cloud', signedIn: false, friends: [], messages: [], activities: {}, activityLog: [], self: { id: 'cloud-guest', name: '我', friendCode: '' }, authToken: '', websocketUrl: '', iceServers: [] };
 let petGifItems = [];
 let mediaMode = 'image';
 let mediaRecorder;
@@ -746,7 +754,7 @@ let appSettings = {
   screenMonitorEndpoint: 'https://api.stepfun.com/v1',
   screenMonitorModel: 'step-3.7-flash',
   reviewLlmProvider: 'openai-compatible',
-  reviewLlmEnabled: true,
+  reviewLlmEnabled: false,
   reviewLlmEndpoint: 'https://api.stepfun.com/step_plan/v1',
   reviewLlmModel: 'step-3.7-flash'
 };
@@ -759,6 +767,7 @@ let petAnimationTimer = null;
 let petAnimationLocked = false;
 let petActionTimer = null;
 const ONBOARDING_MODE_KEY = 'focusPetOnboardingMode';
+const PERMISSION_PROMPT_KEY = 'focusPetPermissionPrompted:v1';
 
 function playPetAnimation(name, { locked = false } = {}) {
   const animationName = PET_ANIMATIONS[name] ? name : 'idle';
@@ -5433,6 +5442,40 @@ async function loadPermissionGuide() {
   }
 }
 
+function permissionGuideNeedsAction(profile = {}) {
+  const steps = Array.isArray(profile.permissionGuideSteps) ? profile.permissionGuideSteps : [];
+  return steps.some(step => step.status === 'blocked');
+}
+
+function firstRunPermissionPrompted() {
+  try {
+    return localStorage.getItem(PERMISSION_PROMPT_KEY) === 'true';
+  } catch {
+    return true;
+  }
+}
+
+function markFirstRunPermissionPrompted() {
+  try {
+    localStorage.setItem(PERMISSION_PROMPT_KEY, 'true');
+  } catch {}
+}
+
+async function openFirstRunPermissionGuideIfNeeded() {
+  if (firstRunPermissionPrompted() || typeof window.focusPet.getPermissionStatus !== 'function') return;
+  try {
+    const profile = await window.focusPet.getPermissionStatus();
+    if (!permissionGuideNeedsAction(profile)) return;
+    markFirstRunPermissionPrompted();
+    await showSettings();
+    setSettingsGroup('advanced');
+    renderPermissionGuide(profile);
+    message.textContent = '先打开需要的系统权限，再回来继续使用。';
+  } catch {
+    markFirstRunPermissionPrompted();
+  }
+}
+
 function renderSettings(settings) {
   appSettings = settings;
   renderPlatformSettings(settings.platform);
@@ -5537,12 +5580,87 @@ async function showSettings() {
   message.textContent = '我看着设置面板，提醒节奏调顺就继续任务。';
 }
 
+function isCloudChatState(state = chatState) {
+  return state?.source === 'cloud';
+}
+
+function cloudChatSignedIn(state = chatState) {
+  return isCloudChatState(state) && Boolean(state.signedIn && state.authToken && state.self?.id && state.self.id !== 'cloud-guest');
+}
+
+function normalizeCloudFriend(friend = {}) {
+  return {
+    id: String(friend.id || ''),
+    name: String(friend.name || friend.displayName || friend.id || '好友').trim() || '好友',
+    friendCode: String(friend.friendCode || '').trim(),
+    status: friend.status || (friend.online ? 'online' : 'offline'),
+    unread: Number(friend.unread || 0)
+  };
+}
+
+function mergeCloudRealtimeState(payload = {}) {
+  const self = payload.self
+    ? {
+        id: String(payload.self.id || ''),
+        name: String(payload.self.name || payload.self.displayName || '我').trim() || '我',
+        friendCode: String(payload.self.friendCode || '').trim(),
+        status: 'online'
+      }
+    : chatState.self;
+  chatState = {
+    ...chatState,
+    signedIn: Boolean(chatState.authToken && self?.id),
+    self,
+    friends: Array.isArray(payload.friends) ? payload.friends.map(normalizeCloudFriend).filter(friend => friend.id) : chatState.friends,
+    iceServers: Array.isArray(payload.iceServers) ? payload.iceServers : chatState.iceServers
+  };
+}
+
+function renderCloudChatAccount() {
+  if (!cloudChatAccount) return;
+  const isCloud = isCloudChatState();
+  cloudChatAccount.hidden = !isCloud;
+  if (!isCloud) return;
+  const signedIn = cloudChatSignedIn();
+  const friendCode = chatState.self?.friendCode || '';
+  cloudChatStatus.textContent = signedIn
+    ? `${chatState.self?.name || '我'} · Cloud 已连接`
+    : (chatState.error ? `Cloud 需要重新连接：${chatState.error}` : '创建 ID 后显示好友码');
+  cloudFriendCode.textContent = friendCode ? `好友码 ${friendCode}` : '好友码 -';
+  cloudRegisterButton.disabled = signedIn;
+  cloudDisplayName.disabled = signedIn;
+  cloudFriendCodeInput.disabled = !signedIn;
+  cloudAddFriendButton.disabled = !signedIn;
+  cloudRefreshButton.disabled = !signedIn && !chatState.authToken;
+}
+
+function syncCloudChatControls() {
+  const isCloud = isCloudChatState();
+  const signedIn = cloudChatSignedIn();
+  const hasFriend = Boolean(selectedChatFriendId());
+  chatInput.disabled = isCloud;
+  chatInput.placeholder = isCloud ? 'Cloud 模式先支持语音/视频' : '发消息';
+  imageButton.disabled = isCloud;
+  fileButton.disabled = isCloud;
+  petGifButton.disabled = isCloud;
+  voiceModeButton.disabled = isCloud;
+  chatCallAudio.disabled = isCloud ? !signedIn || !hasFriend : false;
+  chatCallVideo.disabled = isCloud ? !signedIn || !hasFriend : false;
+  revokeSessionButton.hidden = isCloud;
+}
+
 async function loadChatState() {
-  chatState = await window.focusPet.getChatState();
+  if (typeof window.focusPet.getCloudState === 'function') {
+    chatState = await window.focusPet.getCloudState();
+  } else {
+    chatState = await window.focusPet.getChatState();
+  }
   renderFriends();
   renderMessages();
   renderPeerActivity();
-  if (friendSelect.value) window.focusPet.markRead(friendSelect.value).catch(() => {});
+  renderCloudChatAccount();
+  syncCloudChatControls();
+  if (!isCloudChatState() && friendSelect.value) window.focusPet.markRead(friendSelect.value).catch(() => {});
 }
 
 function chatSocketActive() {
@@ -5562,9 +5680,19 @@ function connectChatSocket() {
     clearTimeout(chatReconnectTimer);
     chatReconnectTimer = null;
   }
-  const token = encodeURIComponent(chatState.authToken || '');
-  const peerId = encodeURIComponent(chatState.self?.id || 'pet-owner');
-  const url = `ws://127.0.0.1:${chatState.port}?token=${token}&peerId=${peerId}`;
+  let url = '';
+  if (isCloudChatState()) {
+    if (!cloudChatSignedIn() || !chatState.websocketUrl) {
+      renderCloudChatAccount();
+      syncCloudChatControls();
+      return;
+    }
+    url = chatState.websocketUrl;
+  } else {
+    const token = encodeURIComponent(chatState.authToken || '');
+    const peerId = encodeURIComponent(chatState.self?.id || 'pet-owner');
+    url = `ws://127.0.0.1:${chatState.port}?token=${token}&peerId=${peerId}`;
+  }
   chatSocket = new WebSocket(url);
   chatSocket.onopen = () => {
     if (chatPingTimer) clearInterval(chatPingTimer);
@@ -5578,10 +5706,13 @@ function connectChatSocket() {
       return;
     }
     if (data.event === 'state') {
-      chatState = data.payload;
+      if (isCloudChatState()) mergeCloudRealtimeState(data.payload);
+      else chatState = data.payload;
       renderFriends();
       renderMessages();
       renderPeerActivity();
+      renderCloudChatAccount();
+      syncCloudChatControls();
     }
     if (data.event === 'message') {
       syncChatMessage(data.payload);
@@ -5596,6 +5727,8 @@ function connectChatSocket() {
       chatState.friends = data.payload;
       renderFriends();
       renderPeerActivity();
+      renderCloudChatAccount();
+      syncCloudChatControls();
     }
     if (data.event === 'activity') {
       handleChatActivityEvent(data.payload);
@@ -5618,13 +5751,15 @@ function connectChatSocket() {
 }
 
 function selectedChatFriendId() {
-  return friendSelect.value || chatState.friends[0]?.id || 'demo-friend';
+  return friendSelect.value || chatState.friends[0]?.id || '';
 }
 
 function sendChatRealtime(type, payload = {}) {
   if (chatSocket?.readyState !== WebSocket.OPEN) return;
+  const to = payload.to || chatCallPeerId || selectedChatFriendId();
+  if (!to) return;
   const event = { type, ...payload };
-  event.to = event.to || chatCallPeerId || selectedChatFriendId();
+  event.to = to;
   event.callId = event.callId || chatCallId || `call-${Date.now()}`;
   event.mode = event.mode || 'audio';
   chatSocket.send(JSON.stringify(event));
@@ -5722,6 +5857,14 @@ function cancelChatRtcNotice() {
 }
 
 async function requestChatCall(mode) {
+  if (isCloudChatState() && !cloudChatSignedIn()) {
+    message.textContent = '先创建我的 ID，再发起通话。';
+    return;
+  }
+  if (!selectedChatFriendId()) {
+    message.textContent = isCloudChatState() ? '先添加好友码，再发起通话。' : '先添加好友，再发起通话。';
+    return;
+  }
   if (!chatRtcNoticeAccepted()) {
     showChatRtcNotice(mode, () => startChatCall(mode));
     return;
@@ -5730,6 +5873,10 @@ async function requestChatCall(mode) {
 }
 
 async function startChatCall(mode) {
+  if (!selectedChatFriendId()) {
+    message.textContent = isCloudChatState() ? '先添加好友码，再发起通话。' : '先添加好友，再发起通话。';
+    return;
+  }
   chatCallId = `call-${Date.now()}`;
   chatCallPeerId = selectedChatFriendId();
   const stream = await getChatLocalStream(mode);
@@ -5850,14 +5997,16 @@ function renderFriends() {
   if (!chatState.friends.length) {
     const option = document.createElement('option');
     option.value = '';
-    option.textContent = '暂无好友';
+    option.textContent = isCloudChatState() ? '先添加好友码' : '暂无好友';
     option.disabled = true;
     friendSelect.appendChild(option);
     revokeSessionButton.disabled = true;
+    renderCloudChatAccount();
+    syncCloudChatControls();
     updateHomeActions();
     return;
   }
-  revokeSessionButton.disabled = false;
+  revokeSessionButton.disabled = isCloudChatState();
   for (const friend of chatState.friends) {
     const option = document.createElement('option');
     option.value = friend.id;
@@ -5865,6 +6014,8 @@ function renderFriends() {
     option.selected = friend.id === selectedFriendId;
     friendSelect.appendChild(option);
   }
+  renderCloudChatAccount();
+  syncCloudChatControls();
   updateHomeActions();
 }
 
@@ -5936,7 +6087,10 @@ function renderMessages() {
   const callNotice = activeChatCallNoticeText();
   if (callNotice) appendChatSystemRow(callNotice);
   if (!visibleMessages.length && !callNotice) {
-    appendChatSystemRow('还没有消息，先发语音或视频给搭子。', 'chat-empty');
+    const emptyText = isCloudChatState()
+      ? (cloudChatSignedIn() ? '添加好友码后，可以发起语音或视频。' : '先创建我的 ID，生成好友码。')
+      : '还没有消息，先发语音或视频给搭子。';
+    appendChatSystemRow(emptyText, 'chat-empty');
   }
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -6177,6 +6331,7 @@ async function showChat({ auto = false, prompt = '' } = {}) {
 }
 
 async function revokeSelectedPeerSession() {
+  if (isCloudChatState()) return;
   if (!friendSelect.value) return;
   const result = await window.focusPet.revokePeerSession(friendSelect.value);
   await loadChatState();
@@ -6186,7 +6341,53 @@ async function revokeSelectedPeerSession() {
     : `${name} 当前没有可撤销的外部会话。`;
 }
 
+async function refreshCloudChat() {
+  if (typeof window.focusPet.refreshCloudState !== 'function') return loadChatState();
+  chatState = await window.focusPet.refreshCloudState();
+  renderFriends();
+  renderMessages();
+  renderPeerActivity();
+  renderCloudChatAccount();
+  syncCloudChatControls();
+  connectChatSocket();
+}
+
+async function registerCloudChatAccount() {
+  const displayName = cloudDisplayName.value.trim();
+  chatState = await window.focusPet.registerCloudUser({ displayName });
+  renderFriends();
+  renderMessages();
+  renderPeerActivity();
+  renderCloudChatAccount();
+  syncCloudChatControls();
+  connectChatSocket();
+  message.textContent = chatState.self?.friendCode
+    ? `我的好友码是 ${chatState.self.friendCode}。`
+    : 'Cloud ID 已创建。';
+}
+
+async function addCloudChatFriend() {
+  const friendCode = cloudFriendCodeInput.value.trim();
+  if (!friendCode) {
+    message.textContent = '先输入好友码。';
+    return;
+  }
+  chatState = await window.focusPet.addCloudFriend(friendCode);
+  cloudFriendCodeInput.value = '';
+  renderFriends();
+  renderMessages();
+  renderPeerActivity();
+  renderCloudChatAccount();
+  syncCloudChatControls();
+  connectChatSocket();
+  message.textContent = '好友已添加，可以发起语音或视频。';
+}
+
 async function sendTextMessage(textOverride) {
+  if (isCloudChatState()) {
+    message.textContent = 'Cloud 好友当前用于语音和视频，暂不发送文字消息。';
+    return;
+  }
   const text = (textOverride || chatInput.value).trim();
   if (!text) return;
   chatInput.value = '';
@@ -6194,6 +6395,10 @@ async function sendTextMessage(textOverride) {
 }
 
 async function sendMessage(partial) {
+  if (isCloudChatState()) {
+    message.textContent = 'Cloud 好友当前用于语音和视频，暂不发送文字或文件。';
+    return;
+  }
   if (!chatSocketEnabled) await ensureChatConnected();
   const outgoing = {
     clientId: `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -6219,6 +6424,10 @@ function readFileAsBase64(file) {
 }
 
 async function sendFile(file, type) {
+  if (isCloudChatState()) {
+    message.textContent = 'Cloud 好友当前用于语音和视频，暂不发送文件。';
+    return;
+  }
   if (file.size > (appSettings.maxMediaMb || chatState.settings?.maxMediaMb || 25) * 1024 * 1024) {
     message.textContent = `文件太大，最多 ${appSettings.maxMediaMb || chatState.settings?.maxMediaMb || 25}MB`;
     return;
@@ -6301,6 +6510,10 @@ function renderPetGifTray(items = petGifItems) {
 }
 
 async function togglePetGifTray() {
+  if (isCloudChatState()) {
+    message.textContent = 'Cloud 好友当前用于语音和视频，暂不发送宠物动图。';
+    return;
+  }
   if (!petGifTray.hidden) {
     setPetGifTrayVisible(false);
     return;
@@ -6527,6 +6740,7 @@ async function loadSettings() {
   renderSettings(await window.focusPet.getSettings());
   scheduleUpdateChecks();
   scheduleScreenMonitor();
+  openFirstRunPermissionGuideIfNeeded();
 }
 
 function scheduleUpdateChecks() {
@@ -6871,10 +7085,16 @@ chatCallVideo.addEventListener('click', () => requestChatCall('video').catch(err
 chatCallEnd.addEventListener('click', endChatCall);
 chatRtcContinue.addEventListener('click', () => continueChatRtcNotice().catch(error => { message.textContent = `通话失败：${error.message}`; }));
 chatRtcCancel.addEventListener('click', cancelChatRtcNotice);
+cloudRegisterButton.addEventListener('click', () => registerCloudChatAccount().catch(error => { message.textContent = `创建 ID 失败：${error.message}`; }));
+cloudAddFriendButton.addEventListener('click', () => addCloudChatFriend().catch(error => { message.textContent = `添加好友失败：${error.message}`; }));
+cloudRefreshButton.addEventListener('click', () => refreshCloudChat().catch(error => { message.textContent = `Cloud 刷新失败：${error.message}`; }));
+cloudFriendCodeInput.addEventListener('keydown', event => { if (event.key === 'Enter') addCloudChatFriend().catch(error => { message.textContent = `添加好友失败：${error.message}`; }); });
+cloudDisplayName.addEventListener('keydown', event => { if (event.key === 'Enter') registerCloudChatAccount().catch(error => { message.textContent = `创建 ID 失败：${error.message}`; }); });
 revokeSessionButton.addEventListener('click', () => revokeSelectedPeerSession().catch(error => { message.textContent = `撤销会话失败：${error.message}`; }));
 friendSelect.addEventListener('change', () => {
   renderPeerActivity();
-  window.focusPet.markRead(friendSelect.value).catch(() => {});
+  syncCloudChatControls();
+  if (!isCloudChatState()) window.focusPet.markRead(friendSelect.value).catch(() => {});
 });
 chatInput.addEventListener('keydown', event => { if (event.key === 'Enter') sendTextMessage(); });
 mediaInput.addEventListener('change', async () => {

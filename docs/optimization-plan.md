@@ -560,49 +560,49 @@
 
 权限级别：
 
-- 被控制端只回读在线状态、聊天消息和通话状态。
-- 控制端本机可以记录工作/学习/休息状态。
-- 控制端本机可以记录状态摘要。
-- 控制端本机可以记录屏幕分析摘要。
+- Peer 只回读在线状态、聊天消息和通话状态。
+- Owner 本机可以记录工作/学习/休息状态。
+- Owner 本机可以记录状态摘要。
+- Owner 本机可以记录屏幕分析摘要。
 
-默认只让被控制端看到最小状态，不向被控制端下发 App 名称、窗口标题、历史摘要或截图分析结果。
+默认只让 peer 看到最小状态，不向 peer 下发 App 名称、窗口标题、历史摘要或截图分析结果。
 
 详细方案：
 
-- 设置项：保留 `socialActivityShareLevel`，默认 `presence`，但它只影响控制端本机记录策略，不再让 peer 回读活动摘要。
-- `presence`：被控制端只看到在线/离线，不下发活动快照，不下发活动历史。
-- `status`：控制端本机可记录当前状态枚举和通用文案，例如专注中、学习中、休息中、游戏中、可能偏离。
-- `summary`：控制端本机可记录当前状态摘要、建议和置信度。
-- `screen-summary`：控制端本机可记录屏幕分析摘要、原因、建议、复盘 insight 和最近活动历史。
+- 设置项：保留 `socialActivityShareLevel`，默认 `presence`，但它只影响 owner 本机记录策略，不再让 peer 回读活动摘要。
+- `presence`：peer 只看到在线/离线，不下发活动快照，不下发活动历史。
+- `status`：owner 本机可记录当前状态枚举和通用文案，例如专注中、学习中、休息中、游戏中、可能偏离。
+- `summary`：owner 本机可记录当前状态摘要、建议和置信度。
+- `screen-summary`：owner 本机可记录屏幕分析摘要、原因、建议、复盘 insight 和最近活动历史。
 - 服务端统一在 `clientStateForAuth()`、`messageForAuth()` 和 WebSocket `activity` 事件出站前阻断 peer 活动回读，不依赖前端隐藏字段。
 - owner 本机状态和本地 activity log 保留完整数据，用于本机复盘和调试。
 - 本阶段不实现隐私模式、敏感 App 列表、窗口标题脱敏和用户纠错机制。
 
 当前执行进展（2026-07-02）：
 
-- 社交端已改为控制端 / 被控制端模型。
-- Owner 是控制端，本机保留完整活动快照、屏幕分析结果和本机复盘数据。
-- Peer 是被控制端，公开下载包只提供加入会话、消息、语音消息和 WebRTC 语音/视频。
+- 社交端已改为 Owner / Peer 模型。
+- Owner 是本机侧，保留完整活动快照、屏幕分析结果和本机复盘数据。
+- Peer 是远端好友客户端，公开下载包只提供加入会话、消息、语音消息和 WebRTC 语音/视频。
 - Peer 的 `/api/state` 中 `activities` 恒为空对象，`activityLog` 恒为空数组，不随 `socialActivityShareLevel` 改变。
 - Peer 不接收 WebSocket `activity` 事件。
 - Peer 的 `messages[*].activity` 恒为 `null`，避免通过消息列表绕过活动边界。
 - Peer 即使提交自己的活动快照，也不会从服务端回读该快照；该数据只进入 owner 本机视图。
-- 被控制端远端客户端已移除“对方正在做什么”/截图分析面板。
-- 公开发布默认使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；`npm run release:mac:controlled` 保留为可选远端聊天/通话客户端包，避免把 `/client` 包误当成桌宠发布。
+- 远端聊天/通话客户端已移除“对方正在做什么”/截图分析面板。
+- 公开发布默认使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；`npm run release:mac:remote-client` 保留为可选远端聊天/通话客户端包，避免把 `/client` 包误当成桌宠发布。
 - 已补单元测试覆盖默认最小共享、四档共享字段边界、设置归一化和设置页接线。
 
 当前 5.3 验收状态：
 
-- 被控制端默认只回读在线状态、聊天消息和通话状态：已完成。
-- 控制端本机可保留工作/学习/休息状态：已完成。
-- 控制端本机可保留状态摘要：已完成。
-- 控制端本机可保留屏幕分析摘要：已完成。
+- Peer 默认只回读在线状态、聊天消息和通话状态：已完成。
+- Owner 本机可保留工作/学习/休息状态：已完成。
+- Owner 本机可保留状态摘要：已完成。
+- Owner 本机可保留屏幕分析摘要：已完成。
 - 不共享 App 名称、窗口标题、截图媒体或当前任务给 peer：已完成。
 - 不共享内部采集源名称 `sourceName` 给 peer：已完成。
 - 不共享内部活动自定义 message 给 peer：已完成。
 - 不共享复盘 summary、petMessage、tone、status 或 ok 给 peer：已完成。
-- Peer 活动 UI 已从被控制端发布包移除：已完成。
-- 消息内结构化 activity 不绕过控制端/被控制端边界：已完成。
+- Peer 活动 UI 已从远端聊天/通话客户端移除：已完成。
+- 消息内结构化 activity 不绕过 Owner / Peer 边界：已完成。
 - 缺失 owner 活动快照时各档位稳定返回空活动：已完成。
 - Peer 自身活动不绕过共享契约字段白名单：已完成。
 
@@ -702,7 +702,7 @@
 - 已继续执行阶段 5 的一部分：`error-log` 从人工复核升级为 fast 自动 gate，会检查 `docs/errorThing.md` 存在、跳过顶部 `## [时间]` 模板、校验全部真实记录字段完整、确认最新状态为已解决，并扫描是否存在未被后续同问题已解决记录关闭的开放未解决项；QA 已通过时的 Electron/Chromium GPU 退出噪声作为非阻断观察项处理，检查输出只返回行号、字段名和时间，不回显错误正文。
 - 已继续执行阶段 5 的一部分：`--run full` 新增 `screen-pipeline` gate，会在桌面渲染 QA 后执行 `npm run test:screen-pipeline`，用于发布前确认手动屏幕分析、结构化 LLM 输出和复盘 LLM 串联。
 - 已继续执行阶段 5 的一部分：`--run package` 的 macOS package 清单显式包含 `mac-notarization`，在本地打包、签名校验之外列出 `npm run notarize:mac && npm run verify:mac`，避免发布流程漏掉已有公证脚本，并在 staple 后再次执行 Gatekeeper/签名验证。
-- 已继续执行阶段 5 的一部分：普通公开下载改为使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；发布前清单仍保留 `mac-controlled-client-release` 人工条件项，显式列出 `npm run release:mac:controlled`，但该步骤只用于可选远端聊天/通话客户端，依赖部署后的 HTTPS `/client` 入口和 `REMOTE_CLIENT_URL`，不随 `--run package` 自动执行。`package:mac:controlled` 可单独生成 `.app`，`package:mac:remote-client` 仅作为兼容别名保留。
+- 已继续执行阶段 5 的一部分：普通公开下载改为使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；发布前清单保留 `mac-remote-client-release` 人工条件项，显式列出 `npm run release:mac:remote-client`，但该步骤只用于可选远端聊天/通话客户端，依赖部署后的 HTTPS `/client` 入口和 `REMOTE_CLIENT_URL`，不随 `--run package` 自动执行。`package:mac:remote-client` 可单独生成 `.app`。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包的 `REMOTE_CLIENT_URL` 校验收紧为 HTTPS 且路径必须是 `/client` 或 `/client/...`，避免 `/client-...` 这类相似路径被误打包；校验函数已可导入测试。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包内的媒体权限校验从字符串前缀匹配改为解析请求 URL origin 后与 `REMOTE_CLIENT_URL` 精确同源比较，避免相似域名获得麦克风/摄像头权限。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包内的外链和导航边界已收紧，内嵌窗口只保留同源 `/client` 页面，跳出该范围的 http/https 导航交给系统浏览器，非 http/https 外链不会调用 `shell.openExternal()`。

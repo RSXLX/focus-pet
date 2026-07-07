@@ -42,7 +42,7 @@ const DEFAULT_SETTINGS = {
   screenCheckCloudUrl: DEFAULT_SCREEN_CHECK_CLOUD_URL,
   screenCheckDeviceId: '',
   reviewLlmProvider: 'openai-compatible',
-  reviewLlmEnabled: true,
+  reviewLlmEnabled: false,
   reviewLlmEndpoint: DEFAULT_REVIEW_LLM_ENDPOINT,
   reviewLlmModel: DEFAULT_REVIEW_LLM_MODEL,
   voiceRecordShortcut: DEFAULT_VOICE_RECORD_SHORTCUT,

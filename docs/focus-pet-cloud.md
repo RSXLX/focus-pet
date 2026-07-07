@@ -41,16 +41,36 @@ FOCUS_PET_CLOUD_RTC_ICE_SERVERS='[
 ]'
 ```
 
+## Modal 部署和 TURN
+
+Focus Pet Cloud 可以部署在 Modal，并由 Modal Secret 下发 `FOCUS_PET_CLOUD_RTC_ICE_SERVERS`。当前线上部署使用两个独立 Secret：
+
+- `focus-pet-cloud-stepfun`：保存后端 StepFun key。
+- `focus-pet-cloud-turn`：保存 Metered TURN ICE 配置。
+
+需要注意：Modal 的 Web Endpoint 适合 HTTP/WebSocket 服务，Modal tunnel 可以暴露运行时 TCP 端口，但不是稳定的生产 TURN relay。TURN 服务本身仍建议使用托管 TURN 或自建 coturn，并确保开放客户端连接端口和 relay 端口；然后把生成的 ICE server JSON 配进 Focus Pet Cloud。
+
+配置后执行：
+
+```bash
+modal secret create --force focus-pet-cloud-turn --from-dotenv /tmp/focus-pet-turn.env
+npm run cloud:deploy:modal
+node scripts/release-preflight.js --check cloud-health
+npm run cloud:turn:verify
+```
+
+`cloud:turn:verify` 会读取线上 `/healthz`，注册一个临时 Cloud 用户读取 `/api/ice`，并对 `turns:` 或 `turn:?transport=tcp` 地址做本机 TCP 连通性探测。该脚本不会输出 TURN URL、username 或 credential；如果未加 `--skip-api-ice`，它会像 `cloud:smoke` 一样写入一个生产临时用户。
+
 ## HTTP API
 
 ### `GET /client`
 
-公开被控制端客户端入口，不需要预置 token。用户打开后可以创建自己的稳定 ID、查看好友码、添加好友码，并通过 Cloud WebSocket 建立一对一 WebRTC 语音/视频通话。
+公开 Cloud Web 客户端入口，不需要预置 token。用户打开后可以创建自己的稳定 ID、查看好友码、添加好友码，并通过 Cloud WebSocket 建立一对一 WebRTC 语音/视频通话。
 
 该入口用于可选的聊天/通话客户端包。如果需要把 Cloud `/client` 包成一个只负责账号、好友和通话的远端客户端，可使用：
 
 ```bash
-REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:controlled
+REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:remote-client
 ```
 
 该客户端只包含账号、好友和通话能力，不展示对方活动快照或截图分析结果。
@@ -242,7 +262,7 @@ modal secret create --force focus-pet-cloud-stepfun --from-dotenv /tmp/focus-pet
 rm -f /tmp/focus-pet-stepfun.env
 ```
 
-当前 `modal_app.py` 固定挂载 `focus-pet-cloud-stepfun`，这样本地部署和远端容器 import 时 Modal 依赖图保持一致。Secret 不存在时部署会失败；Secret 存在但缺少 StepFun key 时，`/api/screen-check` 会返回 `needs-config`。
+当前 `modal_app.py` 固定挂载 `focus-pet-cloud-stepfun`，这样本地部署和远端容器 import 时 Modal 依赖图保持一致。Secret 不存在时部署会失败；Secret 存在但缺少 StepFun key 时，`/api/screen-check` 会返回 `needs-config`。`/healthz` 会返回非敏感的 `rtc.configValid`、`rtc.configError` 和 `rtc.hasTurn` 字段，用来区分 TURN JSON 写错和 TURN 尚未配置；不会返回 TURN 地址、用户名或 credential。
 
 ## GitHub 托管边界
 
@@ -265,6 +285,8 @@ GitHub Pages 不能承载 Node/WebSocket 后端，也不能作为 Focus Pet Clou
 5. 用户只需要把 `friendCode` 发给对方，双方即可建立好友关系。
 6. 发起语音/视频时，桌面端通过 Cloud WebSocket 交换 WebRTC offer、answer 和 ICE candidate。
 7. 开启屏幕检查时，桌面端调用 Cloud `/api/screen-check`，不需要用户配置或持有 StepFun key。
-8. 如果只需要账号、好友和通话能力，可单独构建聊天/通话客户端：`REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:controlled`。
+8. 如果只需要账号、好友和通话能力，可单独构建轻量聊天/通话客户端：`REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:remote-client`。
 
-当前仓库已经具备 Cloud 后端、Modal 部署入口、公开 `/client` 聊天/通话客户端入口、稳定 ID、好友码、认证 WebSocket 信令、WebRTC TURN 配置接口、后端屏幕检查代理，以及完整桌宠 macOS DMG/ZIP release 脚本。聊天/通话客户端 release 脚本仅作为可选发布面保留。
+生产 Cloud 的非破坏性健康检查使用 `node scripts/release-preflight.js --check cloud-health`。发布前人工 smoke test 使用 `npm run cloud:smoke`；它会注册两个临时生产 Cloud 用户、互加好友、连接 WSS、转发一次通话邀请，并调用 `/api/screen-check`，因此不会自动加入 `release:preflight -- --run full`。
+
+当前仓库已经具备 Cloud 后端、Modal 部署入口、公开 `/client` 聊天/通话客户端入口、完整桌宠内的 Cloud 账号/好友入口、稳定 ID、好友码、认证 WebSocket 信令、WebRTC TURN 配置接口、后端屏幕检查代理，以及完整桌宠 macOS DMG/ZIP release 脚本。聊天/通话客户端 release 脚本仅作为可选发布面保留。

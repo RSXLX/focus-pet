@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: file:; media-src 'self' data: blob: file:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; object-src 'none'; base-uri 'none'; frame-src 'none'"
+    content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: file:; media-src 'self' data: blob: file:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* wss://reecewong520--focus-pet-cloud-cloud.modal.run; object-src 'none'; base-uri 'none'; frame-src 'none'"
   />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Focus Pet</title>
@@ -178,17 +178,17 @@
         </section>
 
         <section id="settingsGroupSocial" class="settings-group" data-settings-group="social" data-setting-risk="social" aria-labelledby="settingsTabSocial" hidden>
-          <label class="setting-line"><span>控制端可见性</span>
+          <label class="setting-line"><span>好友可见性</span>
             <select id="settingSocialActivityShareLevel">
               <option value="presence">仅记录在线状态</option>
-              <option value="status">控制端记录工作/学习/休息状态</option>
-              <option value="summary">控制端记录状态摘要</option>
-              <option value="screen-summary">控制端记录屏幕分析摘要</option>
+              <option value="status">好友记录工作/学习/休息状态</option>
+              <option value="summary">好友记录状态摘要</option>
+              <option value="screen-summary">好友记录屏幕分析摘要</option>
             </select>
           </label>
           <label class="setting-line"><span>媒体上限 MB</span><input id="settingMediaMb" type="number" min="1" max="100" /></label>
           <label class="setting-line"><span>语音快捷键</span><input id="settingVoiceShortcut" type="text" placeholder="Alt+R" maxlength="40" spellcheck="false" /></label>
-          <div class="settings-risk-note">邀请码、外部会话和通话配置在聊天面板管理；被控制端不会回读对方截图分析结果。</div>
+          <div class="settings-risk-note">好友码、外部会话和通话配置在聊天面板管理；对方不会回读你的截图分析结果。</div>
         </section>
 
         <section id="settingsGroupAdvanced" class="settings-group" data-settings-group="advanced" data-setting-risk="advanced" aria-labelledby="settingsTabAdvanced" hidden>
@@ -306,6 +306,19 @@
         <strong>聊天</strong>
         <button id="closeChat">×</button>
       </header>
+      <section id="cloudChatAccount" class="cloud-chat-account" aria-label="Focus Pet Cloud 账号">
+        <div class="cloud-chat-identity">
+          <span id="cloudChatStatus">Cloud 未连接</span>
+          <b id="cloudFriendCode">好友码 -</b>
+        </div>
+        <div class="cloud-chat-actions">
+          <input id="cloudDisplayName" maxlength="40" placeholder="昵称" />
+          <button id="cloudRegisterButton" type="button">创建 ID</button>
+          <input id="cloudFriendCodeInput" maxlength="20" placeholder="好友码" />
+          <button id="cloudAddFriendButton" type="button">添加</button>
+          <button id="cloudRefreshButton" type="button">刷新</button>
+        </div>
+      </section>
       <div class="friend-row">
         <select id="friendSelect" aria-label="好友"></select>
         <button id="revokeSessionButton" type="button" title="撤销该好友的外部设备会话">撤销会话</button>

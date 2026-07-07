@@ -33,6 +33,7 @@ const {
 } = require('../src/update-service');
 const chatService = require('../src/chat-service');
 const cloudService = require('../src/cloud-service');
+const cloudClient = require('../src/cloud-client');
 const { normalizeMessage, reconcileQueuedMessages } = chatService;
 const { applyLaunchAtLogin, launchAtLoginState } = require('../src/launch-login');
 const { reviewLlmConfig, summarizeDailyReview } = require('../src/review-llm');
@@ -45,6 +46,10 @@ const {
 } = require('../src/llm-provider');
 const { parseFocusPetProcesses } = require('../scripts/process-utils');
 const { shouldRestartAfterExit } = require('../scripts/run-electron');
+const {
+  parseIceUrl: parseCloudTurnIceUrl,
+  summarizeIceUrls: summarizeCloudTurnIceUrls
+} = require('../scripts/verify-cloud-turn');
 const {
   parseWindowsFrontmost,
   platformFocusPermission,
@@ -939,6 +944,7 @@ test('settings store normalizes configurable behavior', () => {
   assert.equal(defaultSettings.screenMonitorProvider, 'stepfun');
   assert.equal(defaultSettings.screenMonitorEndpoint, DEFAULT_STEPFUN_ENDPOINT);
   assert.equal(defaultSettings.screenMonitorModel, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(defaultSettings.reviewLlmEnabled, false);
 
   const saved = store.updateSettings({
     popupCooldownMinutes: 0,
@@ -2411,7 +2417,7 @@ test('external chat handles missing owner activity across sharing levels', () =>
   }
 });
 
-test('external chat keeps controlled clients blind to activity snapshots', () => {
+test('external chat keeps peer clients blind to activity snapshots', () => {
   const peerOwnActivity = {
     id: 'peer-own-activity',
     from: 'peer-1',
@@ -2467,7 +2473,7 @@ test('external chat keeps controlled clients blind to activity snapshots', () =>
   assert.equal(ownerState.activityLog[0].currentTask.text, 'peer 私密任务');
 });
 
-test('external chat only sends activity WebSocket events to the controller', () => {
+test('external chat only sends activity WebSocket events to the owner', () => {
   assert.equal(typeof chatService.activityEventForAuth, 'function');
   const peerOwnActivity = {
     id: 'peer-ws-activity',
@@ -3147,7 +3153,7 @@ test('remote client mac packaging wraps the deployed HTTPS client', () => {
   const packager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-remote-client-macos.js'), 'utf8');
 
   assert.equal(packageJson.scripts['package:mac:remote-client'], 'node scripts/package-remote-client-macos.js');
-  assert.equal(packageJson.scripts['package:mac:controlled'], 'node scripts/package-remote-client-macos.js');
+  assert.equal(packageJson.scripts['package:mac:remote-client'], 'node scripts/package-remote-client-macos.js');
   assert.match(packager, /REMOTE_CLIENT_URL/);
   assert.match(packager, /if \(require\.main === module\)/);
   assert.match(packager, /parsed\.protocol !== 'https:'/);
@@ -3177,12 +3183,12 @@ test('remote client mac packaging wraps the deployed HTTPS client', () => {
 
 test('remote client release assets are clearly separated from the desktop pet app', () => {
   const packageJson = require('../package.json');
-  const releaseCommand = packageJson.scripts['release:mac:controlled'];
+  const releaseCommand = packageJson.scripts['release:mac:remote-client'];
 
   assert.match(releaseCommand, /APP_NAME="Focus Pet Client"/);
-  assert.match(releaseCommand, /FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:controlled/);
+  assert.match(releaseCommand, /FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:remote-client/);
   assert.doesNotMatch(releaseCommand, /APP_NAME="Focus Pet"/);
-  assert.doesNotMatch(releaseCommand, /Controlled/);
+  assert.doesNotMatch(releaseCommand, new RegExp('Control' + 'led'));
 });
 
 test('external chat exposes WebRTC signaling and ICE configuration', () => {
@@ -3316,6 +3322,79 @@ test('Focus Pet Cloud registers device-bound users with stable public ids', () =
   assert.equal(cloudService.resolveUserAuth('cloud-token-a', result.state, { deviceId: 'device-B' }), null);
 });
 
+test('desktop Cloud client registers refreshes and exposes chat-shaped state', async () => {
+  const dataDir = tempDir('cloud-client');
+  const accountPath = path.join(dataDir, 'cloud-account.json');
+  const requests = [];
+  const fetchImpl = async (url, options = {}) => {
+    requests.push({ url, options });
+    if (url === 'https://cloud.example.com/api/users') {
+      assert.equal(options.method, 'POST');
+      const body = JSON.parse(options.body);
+      assert.equal(body.displayName, '小林');
+      assert.match(body.deviceId, /^device-/);
+      return {
+        ok: true,
+        json: async () => ({
+          user: { id: 'user_a', displayName: '小林', friendCode: 'FP-A', online: true },
+          authToken: 'token-a',
+          deviceId: body.deviceId,
+          iceServers: [{ urls: 'turn:turn.example.com:3478?transport=tcp' }]
+        })
+      };
+    }
+    if (url === 'https://cloud.example.com/api/me') {
+      assert.equal(options.headers.authorization, 'Bearer token-a');
+      return {
+        ok: true,
+        json: async () => ({
+          self: { id: 'user_a', displayName: '小林', friendCode: 'FP-A', online: true },
+          friends: [{ id: 'user_b', displayName: 'Bob', friendCode: 'FP-B', online: true }],
+          iceServers: [{ urls: 'turn:turn.example.com:3478?transport=tcp' }]
+        })
+      };
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+
+  const state = await cloudClient.registerCloudUser(
+    { displayName: '小林' },
+    { accountPath, baseUrl: 'https://cloud.example.com/client', fetchImpl }
+  );
+
+  assert.equal(state.source, 'cloud');
+  assert.equal(state.signedIn, true);
+  assert.equal(state.self.friendCode, 'FP-A');
+  assert.deepEqual(state.friends.map(friend => [friend.id, friend.name, friend.status]), [['user_b', 'Bob', 'online']]);
+  assert.match(state.websocketUrl, /^wss:\/\/cloud\.example\.com\/\?token=token-a&deviceId=device-/);
+  assert.equal(requests.length, 2);
+  assert.equal(JSON.parse(fs.readFileSync(accountPath, 'utf8')).authToken, 'token-a');
+});
+
+test('desktop pet wires Focus Pet Cloud account IPC into the chat surface', () => {
+  const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'preload.js'), 'utf8');
+  const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+
+  assert.match(packageJson.scripts.check, /src\/cloud-client\.js/);
+  assert.match(main, /require\('\.\/cloud-client'\)/);
+  for (const channel of ['cloud:get-state', 'cloud:register', 'cloud:add-friend', 'cloud:refresh', 'cloud:clear-account']) {
+    assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`));
+  }
+  assert.match(preload, /getCloudState: \(\) => ipcRenderer\.invoke\('cloud:get-state'\)/);
+  assert.match(preload, /registerCloudUser: input => ipcRenderer\.invoke\('cloud:register', input\)/);
+  assert.match(renderer, /chatState = await window\.focusPet\.getCloudState\(\)/);
+  assert.match(renderer, /chatState\.websocketUrl/);
+  assert.match(renderer, /registerCloudChatAccount/);
+  assert.match(renderer, /addCloudChatFriend/);
+  assert.match(indexHtml, /id="cloudChatAccount"/);
+  assert.match(indexHtml, /id="cloudFriendCode"/);
+  assert.match(indexHtml, /wss:\/\/reecewong520--focus-pet-cloud-cloud\.modal\.run/);
+  assert.doesNotMatch(indexHtml, new RegExp(`Control${'led'}|被控${'制端'}`));
+});
+
 test('Focus Pet Cloud pairs users by friend code with reciprocal friendship', () => {
   const state = cloudService.createInitialCloudState();
   const alice = cloudService.registerUser({ displayName: 'Alice', deviceId: 'device-A' }, {
@@ -3393,6 +3472,64 @@ test('Focus Pet Cloud call audit omits SDP ICE and TURN details', () => {
   assert.equal(result.entry.event, 'rtc-offer');
   assert.equal(result.entry.mode, 'video');
   assert.doesNotMatch(JSON.stringify(result.state.callAuditLog), /secret-sdp|candidate|turn\.example\.com/);
+});
+
+test('Focus Pet Cloud reports TURN config validity without leaking ICE credentials', () => {
+  const validEnv = {
+    FOCUS_PET_CLOUD_RTC_ICE_SERVERS: JSON.stringify([
+      {
+        urls: ['turn:turn.example.com:3478?transport=tcp'],
+        username: 'secret-user-1234567890',
+        credential: 'secret-pass-1234567890'
+      }
+    ])
+  };
+  const validSummary = cloudService.rtcIceServerSummary(validEnv);
+  const validHealth = cloudService.healthState({
+    env: validEnv,
+    state: cloudService.createInitialCloudState()
+  });
+
+  assert.equal(validSummary.configured, true);
+  assert.equal(validSummary.configValid, true);
+  assert.equal(validSummary.configError, '');
+  assert.equal(validSummary.hasTurn, true);
+  assert.equal(validHealth.rtc.configValid, true);
+  assert.equal(validHealth.rtc.hasTurn, true);
+
+  const invalidEnv = {
+    FOCUS_PET_CLOUD_RTC_ICE_SERVERS: '{"urls":["turn:turn.example.com"],"username":"secret-user"'
+  };
+  const invalidSummary = cloudService.rtcIceServerSummary(invalidEnv);
+
+  assert.equal(invalidSummary.configured, true);
+  assert.equal(invalidSummary.configValid, false);
+  assert.equal(invalidSummary.configError, 'invalid-json');
+  assert.equal(invalidSummary.hasTurn, false);
+  assert.equal(invalidSummary.usingDefault, true);
+  assert.doesNotMatch(JSON.stringify({ validSummary, validHealth, invalidSummary }), /turn\.example\.com|secret-user|secret-pass/);
+});
+
+test('Cloud TURN verifier summarizes ICE URLs without leaking credentials', () => {
+  const tcpTurn = parseCloudTurnIceUrl('turn:turn.example.com:3478?transport=tcp');
+  const tlsTurn = parseCloudTurnIceUrl('turns:[2001:db8::1]:5349');
+  const summary = summarizeCloudTurnIceUrls([
+    'stun:stun.example.com:19302',
+    'turn:turn.example.com:3478?transport=tcp',
+    'turns:turn-secret.example.com:5349'
+  ]);
+
+  assert.equal(tcpTurn.scheme, 'turn');
+  assert.equal(tcpTurn.transport, 'tcp');
+  assert.equal(tcpTurn.port, 3478);
+  assert.equal(tcpTurn.tcpTestable, true);
+  assert.equal(tlsTurn.scheme, 'turns');
+  assert.equal(tlsTurn.host, '2001:db8::1');
+  assert.equal(tlsTurn.tcpTestable, true);
+  assert.equal(summary.hasTurn, true);
+  assert.equal(summary.turnUrlCount, 2);
+  assert.equal(summary.tcpTurnUrlCount, 2);
+  assert.doesNotMatch(JSON.stringify(summary), /secret-user|secret-pass|credential|username/);
 });
 
 test('Focus Pet Cloud proxies screen checks through StepFun without returning screenshots or secrets', async () => {
@@ -3494,7 +3631,7 @@ test('Focus Pet Cloud exposes a Node-only backend entrypoint for public deployme
   assert.match(source, /saveState\(result\.state\)/);
 });
 
-test('Focus Pet Cloud serves a public controlled client for zero-setup calls', () => {
+test('Focus Pet Cloud serves a public remote client for zero-setup calls', () => {
   const source = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'cloud-service.js'), 'utf8');
 
   assert.match(source, /function cloudClientHtml\(/);
@@ -3507,7 +3644,7 @@ test('Focus Pet Cloud serves a public controlled client for zero-setup calls', (
   assert.match(source, /RTCPeerConnection/);
   assert.match(source, /navigator\.mediaDevices\.getUserMedia/);
   assert.match(source, /new WebSocket/);
-  assert.doesNotMatch(source, /Focus Pet Controlled/);
+  assert.doesNotMatch(source, new RegExp(`Focus Pet Control${'led'}`));
   assert.doesNotMatch(source, /id="activity"|id="activityImage"|id="activityLog"|对方正在做什么|截图分析面板/);
 });
 
@@ -3515,9 +3652,12 @@ test('Focus Pet Cloud provides a Modal deployment target for zero-setup users', 
   const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
   const modalApp = fs.readFileSync(path.join(PROJECT_ROOT, 'modal_app.py'), 'utf8');
   const docs = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'focus-pet-cloud.md'), 'utf8');
+  const smokeScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'test-cloud-live.js'), 'utf8');
 
   assert.equal(packageJson.scripts['cloud:deploy:modal'], 'modal deploy modal_app.py');
+  assert.equal(packageJson.scripts['cloud:smoke'], 'node scripts/test-cloud-live.js');
   assert.match(packageJson.scripts.check, /python3 -m py_compile modal_app\.py/);
+  assert.match(packageJson.scripts.check, /node --check scripts\/test-cloud-live\.js/);
   assert.match(modalApp, /modal\.App\("focus-pet-cloud"\)/);
   assert.match(modalApp, /modal\.Image\.from_registry\("node:22-slim", add_python="3\.12"\)/);
   assert.match(modalApp, /modal\.Volume\.from_name\("focus-pet-cloud-data", create_if_missing=True\)/);
@@ -3526,6 +3666,11 @@ test('Focus Pet Cloud provides a Modal deployment target for zero-setup users', 
   assert.match(modalApp, /min_containers=1/);
   assert.match(modalApp, /FOCUS_PET_CLOUD_DATA_DIR/);
   assert.match(modalApp, /npm", "run", "cloud:serve"/);
+  assert.match(smokeScript, /registerCloudUser/);
+  assert.match(smokeScript, /addCloudFriend/);
+  assert.match(smokeScript, /new WebSocket/);
+  assert.match(smokeScript, /\/api\/screen-check/);
+  assert.match(smokeScript, /waitForSocketEvent\(bobSocket, 'call-invite'/);
   assert.match(docs, /modal deploy modal_app\.py/);
   assert.match(docs, /GitHub Pages[\s\S]*不能承载 Node\/WebSocket 后端/);
 });
@@ -3679,6 +3824,8 @@ test('desktop chat UI keeps a minimal toolbar with hidden media and WebRTC suppo
   assert.match(main, /setPermissionRequestHandler/);
   assert.match(main, /192\\.168/);
   assert.match(main, /publishScreenActivity/);
+  assert.match(main, /socialActivityShareLevel === 'screen-summary'/);
+  assert.match(main, /publishScreenActivity\(withContext, \{ includeScreenshot: false \}\)/);
   assert.match(main, /publishActivitySnapshot/);
 });
 
@@ -3759,12 +3906,12 @@ test('settings page is layered into basic focus AI social and advanced groups', 
   assert.match(indexHtml, /id="settingsGroupBasic"[\s\S]*id="settingLaunchAtLogin"[\s\S]*id="settingCooldown"[\s\S]*id="settingIdle"[\s\S]*id="settingIntensity"/);
   assert.match(indexHtml, /id="settingsGroupFocus"[\s\S]*id="settingFocusKeywords"[\s\S]*id="settingStudyKeywords"[\s\S]*id="settingGameKeywords"[\s\S]*id="settingDistractionKeywords"[\s\S]*id="settingGameApps"[\s\S]*id="settingWorkApps"/);
   assert.match(indexHtml, /id="settingsGroupAi"[\s\S]*data-setting-risk="ai"[\s\S]*id="settingScreenMonitorEnabled"[\s\S]*id="settingScreenMonitorEndpoint"[\s\S]*id="settingReviewLlmEnabled"[\s\S]*id="testLlmConnectivity"[\s\S]*id="testScreenMonitor"/);
-  assert.match(indexHtml, /id="settingsGroupSocial"[\s\S]*data-setting-risk="social"[\s\S]*id="settingSocialActivityShareLevel"[\s\S]*id="settingMediaMb"[\s\S]*id="settingVoiceShortcut"[\s\S]*邀请码[\s\S]*通话配置/);
+  assert.match(indexHtml, /id="settingsGroupSocial"[\s\S]*data-setting-risk="social"[\s\S]*id="settingSocialActivityShareLevel"[\s\S]*id="settingMediaMb"[\s\S]*id="settingVoiceShortcut"[\s\S]*好友码[\s\S]*通话配置/);
   assert.match(indexHtml, /value="presence"[\s\S]*仅记录在线状态/);
-  assert.match(indexHtml, /value="status"[\s\S]*控制端记录工作\/学习\/休息状态/);
-  assert.match(indexHtml, /value="summary"[\s\S]*控制端记录状态摘要/);
-  assert.match(indexHtml, /value="screen-summary"[\s\S]*控制端记录屏幕分析摘要/);
-  assert.match(indexHtml, /被控制端不会回读对方截图分析结果/);
+  assert.match(indexHtml, /value="status"[\s\S]*好友记录工作\/学习\/休息状态/);
+  assert.match(indexHtml, /value="summary"[\s\S]*好友记录状态摘要/);
+  assert.match(indexHtml, /value="screen-summary"[\s\S]*好友记录屏幕分析摘要/);
+  assert.match(indexHtml, /对方不会回读你的截图分析结果/);
   assert.match(indexHtml, /id="settingsGroupAdvanced"[\s\S]*data-setting-risk="advanced"[\s\S]*id="settingUpdateUrl"[\s\S]*id="settingActivityRetentionDays"[\s\S]*id="openDataFromSettings"[\s\S]*id="runDiagnosticsFromSettings"[\s\S]*id="permissionGuide"/);
 
   assert.match(renderer, /const settingGroupButtons = Array\.from\(document\.querySelectorAll\('\[data-settings-tab\]'\)\)/);
@@ -4524,6 +4671,7 @@ test('release preflight checklist documents required gates and supports fast loc
     runDiagnosticsBundleOutputCheck,
     runDiagnosticsSummaryOutputCheck,
     runDocsBoundaryCheck,
+    runCloudHealthCheck,
     runErrorLogCheck,
     runChatBackendDeployCheck,
     runOptimizationPlanCheck,
@@ -4544,8 +4692,10 @@ test('release preflight checklist documents required gates and supports fast loc
     'screen-pipeline',
     'package-scripts',
     'chat-backend-deploy',
+    'cloud-health',
+    'cloud-live-smoke',
     'mac-package',
-    'mac-controlled-client-release',
+    'mac-remote-client-release',
     'mac-signing',
     'mac-notarization',
     'windows-package',
@@ -4576,11 +4726,26 @@ test('release preflight checklist documents required gates and supports fast loc
   assert.equal(checklist.find(item => item.id === 'package-scripts').runGroup, 'fast');
   assert.equal(checklist.find(item => item.id === 'chat-backend-deploy').command, 'node scripts/release-preflight.js --check chat-backend-deploy');
   assert.equal(checklist.find(item => item.id === 'chat-backend-deploy').runGroup, 'fast');
+  assert.equal(checklist.find(item => item.id === 'cloud-health').command, 'node scripts/release-preflight.js --check cloud-health');
+  assert.equal(checklist.find(item => item.id === 'cloud-health').runGroup, 'full');
+  assert.equal(checklist.find(item => item.id === 'cloud-live-smoke').command, 'npm run cloud:smoke');
+  assert.equal(checklist.find(item => item.id === 'cloud-live-smoke').manual, true);
+  assert.equal(checklist.find(item => item.id === 'cloud-live-smoke').required, true);
+  assert.equal(runCloudHealthCheck({
+    url: 'https://cloud.example.com/client',
+    health: { ok: true, screenCheck: { enabled: true }, rtc: { hasTurn: true } }
+  }).ok, true);
+  assert.deepEqual(runCloudHealthCheck({
+    health: { ok: true, screenCheck: { enabled: true }, rtc: { hasTurn: false } }
+  }).failures, ['turn-missing']);
+  assert.deepEqual(runCloudHealthCheck({
+    health: { ok: true, screenCheck: { enabled: true }, rtc: { configValid: false, hasTurn: false } }
+  }).failures, ['turn-config-invalid', 'turn-missing']);
   assert.equal(checklist.find(item => item.id === 'mac-package').platform, 'darwin');
-  assert.equal(checklist.find(item => item.id === 'mac-controlled-client-release').command, 'npm run release:mac:controlled');
-  assert.equal(checklist.find(item => item.id === 'mac-controlled-client-release').platform, 'darwin');
-  assert.equal(checklist.find(item => item.id === 'mac-controlled-client-release').runGroup, 'package');
-  assert.equal(checklist.find(item => item.id === 'mac-controlled-client-release').manual, true);
+  assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').command, 'npm run release:mac:remote-client');
+  assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').platform, 'darwin');
+  assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').runGroup, 'package');
+  assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').manual, true);
   assert.equal(checklist.find(item => item.id === 'mac-notarization').command, 'npm run notarize:mac && npm run verify:mac');
   assert.equal(checklist.find(item => item.id === 'mac-notarization').platform, 'darwin');
   assert.equal(checklist.find(item => item.id === 'mac-notarization').runGroup, 'package');
@@ -4589,7 +4754,7 @@ test('release preflight checklist documents required gates and supports fast loc
   const fastIds = selectReleasePreflightItems(checklist, { run: 'fast' }).map(item => item.id);
   assert.deepEqual(fastIds, ['node-tests', 'syntax-check', 'diagnostics-summary', 'diagnostics-bundle', 'diagnostics-bundle-output', 'package-scripts', 'chat-backend-deploy', 'docs-boundary', 'optimization-plan', 'error-log']);
   const fullIds = selectReleasePreflightItems(checklist, { run: 'full' }).map(item => item.id);
-  assert.deepEqual(fullIds, ['node-tests', 'syntax-check', 'diagnostics-summary', 'diagnostics-bundle', 'diagnostics-bundle-output', 'render-qa', 'screen-pipeline', 'package-scripts', 'chat-backend-deploy', 'docs-boundary', 'optimization-plan', 'error-log']);
+  assert.deepEqual(fullIds, ['node-tests', 'syntax-check', 'diagnostics-summary', 'diagnostics-bundle', 'diagnostics-bundle-output', 'render-qa', 'screen-pipeline', 'package-scripts', 'chat-backend-deploy', 'cloud-health', 'docs-boundary', 'optimization-plan', 'error-log']);
   const packageIds = selectReleasePreflightItems(checklist, { run: 'package' }).map(item => item.id);
   assert.deepEqual(packageIds, ['mac-package', 'mac-signing', 'mac-notarization']);
   assert.deepEqual(parseArgs(['--json', '--run=fast', '--check=error-log']), {
@@ -5037,7 +5202,7 @@ test('release preflight checklist documents required gates and supports fast loc
     'icons:generate',
     'package:mac',
     'package:win',
-    'package:mac:controlled',
+    'package:mac:remote-client',
     'sign:mac',
     'notarize:mac',
     'verify:mac',
@@ -5787,7 +5952,7 @@ test('release preflight checklist documents required gates and supports fast loc
       'icons:generate': 'node scripts/generate-app-icons.js',
       'package:mac': 'node scripts/package-macos.js',
       'package:win': 'node scripts/package-windows.js',
-      'package:mac:controlled': 'node scripts/package-remote-client-macos.js',
+      'package:mac:remote-client': 'node scripts/package-remote-client-macos.js',
       'sign:mac': 'node scripts/sign-macos.js',
       'notarize:mac': 'node scripts/notarize-macos.js',
       'verify:mac': 'node scripts/verify-macos.js',
@@ -6090,11 +6255,11 @@ test('public download docs point to the full desktop pet release', () => {
   }
   assert.match(focusCloud, /默认公开下载[\s\S]*完整桌宠/);
   assert.match(focusCloud, /npm run release:mac/);
-  assert.match(focusCloud, /聊天\/通话客户端[\s\S]*release:mac:controlled/);
+  assert.match(focusCloud, /聊天\/通话客户端[\s\S]*release:mac:remote-client/);
   assert.match(systemOverview, /普通公开下载[\s\S]*完整桌宠[\s\S]*npm run release:mac/);
-  assert.doesNotMatch(systemOverview, /公开分发应使用被控制端 release/);
-  assert.match(socialBoundary, /远端被控制端客户端[\s\S]*可选/);
-  assert.doesNotMatch(socialBoundary, /完整桌面端保留为控制端\/开发端，不作为普通公开下载包/);
+  assert.doesNotMatch(systemOverview, new RegExp(`公开分发应使用被控${'制端'} release`));
+  assert.match(socialBoundary, /远端聊天\/通话客户端[\s\S]*可选/);
+  assert.doesNotMatch(socialBoundary, new RegExp(`完整桌面端保留为控${'制端'}\\/开发端，不作为普通公开下载包`));
 });
 
 test('Nervy pet spritesheet is wired to the renderer contract', () => {
@@ -7206,8 +7371,8 @@ test('mac release assets script plans dmg zip and checksum manifest names', () =
   const releaseScriptPath = path.join(PROJECT_ROOT, 'scripts', 'create-mac-release-assets.js');
   assert.equal(packageJson.scripts['release:mac'], 'node scripts/create-mac-release-assets.js');
   assert.equal(
-    packageJson.scripts['release:mac:controlled'],
-    'APP_NAME="Focus Pet Client" BUNDLE_ID=dev.focus-pet.client FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:controlled node scripts/create-mac-release-assets.js'
+    packageJson.scripts['release:mac:remote-client'],
+    'APP_NAME="Focus Pet Client" BUNDLE_ID=dev.focus-pet.client FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:remote-client node scripts/create-mac-release-assets.js'
   );
   assert.match(packageJson.scripts.check, /node --check scripts\/create-mac-release-assets\.js/);
 
@@ -7226,7 +7391,7 @@ test('mac release assets script plans dmg zip and checksum manifest names', () =
   assert.equal(path.basename(plan.manifestPath), 'Focus-Pet-2.3.4-mac-arm64-manifest.json');
   assert.equal(path.basename(plan.stagedApplicationsLink), 'Applications');
 
-  assert.doesNotMatch(packageJson.scripts['release:mac:controlled'], /Controlled/);
+  assert.doesNotMatch(packageJson.scripts['release:mac:remote-client'], new RegExp('Control' + 'led'));
 });
 
 test('mac release assets script signs the app before archiving', () => {
@@ -7238,4 +7403,15 @@ test('mac release assets script signs the app before archiving', () => {
   assert.match(releaseScript, /resolvePackageScript/);
   assert.match(releaseScript, /codesign', \[[\s\S]*'--force'[\s\S]*'--deep'[\s\S]*'--sign'/);
   assert.match(releaseScript, /signAppForRelease\(plan\)[\s\S]*createZip\(plan\)/);
+});
+
+test('mac verify script fails release gates on unsigned or unnotarized apps', () => {
+  const verifyScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'verify-macos.js'), 'utf8');
+
+  assert.match(verifyScript, /codesignOk = false/);
+  assert.match(verifyScript, /gatekeeperOk = false/);
+  assert.match(verifyScript, /staplerOk = false/);
+  assert.match(verifyScript, /xcrun', \['stapler', 'validate', appPath\]/);
+  assert.match(verifyScript, /const ok = plistOk && executableCount > 0 && codesignOk && gatekeeperOk && staplerOk/);
+  assert.match(verifyScript, /process\.exitCode = 1/);
 });

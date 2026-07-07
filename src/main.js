@@ -17,6 +17,7 @@ let chatRuntime = null;
 let diagnosticsModule = null;
 let screenMonitorModule = null;
 let llmSelfCheckModule = null;
+let cloudClientModule = null;
 let updateCheckTimer = null;
 let updateStartupTimer = null;
 let lastNotifiedUpdateVersion = '';
@@ -89,6 +90,11 @@ function getScreenMonitor() {
 function getLlmSelfCheck() {
   if (!llmSelfCheckModule) llmSelfCheckModule = require('./llm-self-check');
   return llmSelfCheckModule;
+}
+
+function getCloudClient() {
+  if (!cloudClientModule) cloudClientModule = require('./cloud-client');
+  return cloudClientModule;
 }
 
 function logMain(message, level = 'info') {
@@ -257,18 +263,25 @@ function publicScreenshot(screenshot = null, media = null) {
   };
 }
 
-function publishScreenActivity(result = {}) {
-  if (!result.ok || !result.screenshot?.dataUrl) return null;
+function shouldPublishScreenActivity(settings = {}) {
+  return settings.socialActivityShareLevel === 'screen-summary';
+}
+
+function publishScreenActivity(result = {}, options = {}) {
+  if (!result.ok) return null;
   try {
     ensureChatServiceStarted();
     const chatService = getChatService();
-    const image = parseDataUrl(result.screenshot.dataUrl);
-    if (!image) throw new Error('屏幕截图 data URL 格式无效');
-    const media = chatService.saveMedia({
-      name: `screen-analysis-${new Date(result.time || Date.now()).toISOString().replace(/[:.]/g, '-')}.png`,
-      mimeType: image.mimeType || result.screenshot.mimeType || 'image/png',
-      data: image.data
-    });
+    let media = null;
+    if (options.includeScreenshot && result.screenshot?.dataUrl) {
+      const image = parseDataUrl(result.screenshot.dataUrl);
+      if (!image) throw new Error('屏幕截图 data URL 格式无效');
+      media = chatService.saveMedia({
+        name: `screen-analysis-${new Date(result.time || Date.now()).toISOString().replace(/[:.]/g, '-')}.png`,
+        mimeType: image.mimeType || result.screenshot.mimeType || 'image/png',
+        data: image.data
+      });
+    }
     return chatService.publishActivitySnapshot({
       status: result.status,
       activity: result.activity,
@@ -294,7 +307,7 @@ function publishScreenActivity(result = {}) {
     appendErrorThing({
       description: `屏幕分析结果同步到聊天失败：${error.message}`,
       location: 'src/main.js publishScreenActivity',
-      context: `status=${result.status || 'unknown'}, activity=${result.activity || '无'}, hasScreenshot=${Boolean(result.screenshot?.dataUrl)}`,
+      context: `status=${result.status || 'unknown'}, activity=${result.activity || '无'}, hasScreenshot=${Boolean(result.screenshot?.dataUrl)}, includeScreenshot=${Boolean(options.includeScreenshot)}`,
       possibleCause: '截图 data URL 异常、聊天媒体目录写入失败、媒体大小超过限制，或聊天状态文件不可写。',
       status: '未解决'
     });
@@ -533,7 +546,9 @@ async function sampleScreenMonitor(options = {}) {
       ? await focus.getDailyReview({ screenAnalysis: result, fetchImpl: fetch })
       : null;
     const withContext = { ...result, currentTask, frontmost, pipelineReview };
-    const sharedActivity = publishScreenActivity(withContext);
+    const sharedActivity = shouldPublishScreenActivity(settings)
+      ? publishScreenActivity(withContext, { includeScreenshot: false })
+      : null;
     const publicResult = {
       ...withContext,
       screenshot: publicScreenshot(withContext.screenshot, sharedActivity?.media),
@@ -647,6 +662,11 @@ app.whenReady().then(() => {
     mainWindow.setPosition(bounds.x, bounds.y, false);
   });
   ipcMain.handle('screen-monitor:sample', (_event, options) => sampleScreenMonitor(options));
+  ipcMain.handle('cloud:get-state', () => getCloudClient().getCloudMe({ fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:register', (_event, input) => getCloudClient().registerCloudUser(input, { fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:add-friend', (_event, friendCode) => getCloudClient().addCloudFriend(friendCode, { fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:refresh', () => getCloudClient().getCloudMe({ fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:clear-account', () => getCloudClient().accountToChatState(getCloudClient().clearCloudAccount({ settings: focus.getSettings() }), null, { settings: focus.getSettings() }));
   ipcMain.handle('chat:get-state', () => {
     ensureChatServiceStarted();
     return getChatService().publicState();
