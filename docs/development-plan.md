@@ -183,12 +183,14 @@ npm run cloud:turn:verify
 
 ## Phase 4：macOS 发布闭环
 
-目标：用户下载 DMG 后可以正常打开，发布说明不夸大。
+目标：用户下载 DMG / ZIP 后可以拿到正式 GitHub Release 包，发布说明不夸大。
+
+当前产品决策是不做 Apple Developer ID 签名和 notarization，因此 Phase 4 只闭合 ad-hoc signed 发布包、checksum 和真实下载说明。Developer ID 签名、公证和“无痕下载即用”文案后移到单独版本。
 
 ### 开发内容
 
-1. 使用 Developer ID 签名。
-2. 执行 notarization。
+1. 使用 ad-hoc signing 生成 macOS Apple Silicon DMG / ZIP。
+2. Release 附带 manifest / checksum。
 3. release 前固定执行：
 
 ```bash
@@ -197,18 +199,17 @@ npm run check
 npm run verify:pet-render
 npm run release:preflight
 npm run release:mac
-npm run verify:mac
 ```
 
 4. README 只写真实状态：
    - 没 notarize 就不能写“无痕下载即用”。
    - 已 notarize 后再更新下载说明。
+   - 当前版本必须说明首次打开可能有 Gatekeeper 提示。
 
 ### 验收标准
 
 - DMG / ZIP 都能构建成功。
-- macOS 签名检查通过。
-- notarization 通过。
+- ad-hoc 签名路径构建成功。
 - GitHub Release 附带 checksum。
 - README 下载说明和真实发布状态一致。
 
