@@ -294,6 +294,28 @@ function clientStateForUser(auth = {}, state = loadState(), options = {}) {
   };
 }
 
+function friendIdsForUser(state = loadState(), userId = '') {
+  const id = String(userId || '').trim();
+  if (!id) return [];
+  return [...new Set((state.friendships || [])
+    .filter(item => item.userId === id)
+    .map(item => item.friendId)
+    .filter(Boolean))];
+}
+
+function broadcastClientState(userId, state = loadState()) {
+  const payload = clientStateForUser({ userId }, state, { env: process.env });
+  if (!payload) return 0;
+  return sendToUser(userId, 'state', payload);
+}
+
+function broadcastStateToUserAndFriends(userId, state = loadState()) {
+  const ids = [String(userId || '').trim(), ...friendIdsForUser(state, userId)].filter(Boolean);
+  let delivered = 0;
+  for (const id of [...new Set(ids)]) delivered += broadcastClientState(id, state);
+  return delivered;
+}
+
 function normalizeMode(value) {
   return value === 'video' ? 'video' : 'audio';
 }
@@ -913,8 +935,14 @@ async function handleApi(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/friends') {
     const body = await parseJson(req);
     const result = addFriendByCode(body.friendCode, { state, auth });
-    saveState(result.state);
-    return jsonResponse(res, 200, result);
+    if (!result.ok) {
+      const status = result.error === 'friend not found' ? 404 : 400;
+      return jsonResponse(res, status, { ok: false, error: result.error });
+    }
+    const saved = saveState(result.state);
+    broadcastStateToUserAndFriends(auth.userId, saved);
+    if (result.friend?.id) broadcastStateToUserAndFriends(result.friend.id, saved);
+    return jsonResponse(res, 200, { ok: true, friend: result.friend });
   }
   return jsonResponse(res, 404, { error: 'not found' });
 }
@@ -982,6 +1010,7 @@ function start() {
     const id = randomUUID();
     clients.set(id, { socket, userId: auth.userId, auth });
     sendSocket(socket, 'state', clientStateForUser(auth, state, { env: process.env }));
+    broadcastStateToUserAndFriends(auth.userId, state);
     socket.on('message', raw => {
       try {
         const input = JSON.parse(raw.toString());
@@ -997,6 +1026,7 @@ function start() {
     });
     socket.on('close', () => {
       clients.delete(id);
+      broadcastStateToUserAndFriends(auth.userId, loadState());
     });
   });
   server.listen(port, host);

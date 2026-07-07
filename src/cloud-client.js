@@ -228,12 +228,13 @@ async function registerCloudUser(input = {}, options = {}) {
 async function addCloudFriend(friendCode, options = {}) {
   const account = readAccount(options);
   if (!account.authToken) throw new Error('请先创建我的 ID');
-  await requestJson(cloudApiUrl(account.baseUrl, '/api/friends'), {
+  const result = await requestJson(cloudApiUrl(account.baseUrl, '/api/friends'), {
     fetchImpl: options.fetchImpl,
     method: 'POST',
     headers: authHeaders(account, { 'content-type': 'application/json' }),
     body: JSON.stringify({ friendCode: cleanText(friendCode, 30) })
   });
+  if (result?.ok === false) throw new Error(result.error || '添加好友失败');
   return getCloudMe(options);
 }
 

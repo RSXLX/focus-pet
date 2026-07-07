@@ -3371,6 +3371,54 @@ test('desktop Cloud client registers refreshes and exposes chat-shaped state', a
   assert.equal(JSON.parse(fs.readFileSync(accountPath, 'utf8')).authToken, 'token-a');
 });
 
+test('desktop Cloud client reports invalid friend codes instead of faking success', async () => {
+  const dataDir = tempDir('cloud-client-invalid-friend');
+  const accountPath = path.join(dataDir, 'cloud-account.json');
+  const fetchImpl = async (url, options = {}) => {
+    if (url === 'https://cloud.example.com/api/users') {
+      const body = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({
+          user: { id: 'user_a', displayName: 'Alice', friendCode: 'FP-A', online: true },
+          authToken: 'token-a',
+          deviceId: body.deviceId,
+          iceServers: []
+        })
+      };
+    }
+    if (url === 'https://cloud.example.com/api/me') {
+      return {
+        ok: true,
+        json: async () => ({
+          self: { id: 'user_a', displayName: 'Alice', friendCode: 'FP-A', online: true },
+          friends: [],
+          iceServers: []
+        })
+      };
+    }
+    if (url === 'https://cloud.example.com/api/friends') {
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers.authorization, 'Bearer token-a');
+      return {
+        ok: true,
+        json: async () => ({ ok: false, error: 'friend not found' })
+      };
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+
+  await cloudClient.registerCloudUser(
+    { displayName: 'Alice' },
+    { accountPath, baseUrl: 'https://cloud.example.com', fetchImpl }
+  );
+
+  await assert.rejects(
+    () => cloudClient.addCloudFriend('FP-MISSING', { accountPath, fetchImpl }),
+    /friend not found/
+  );
+});
+
 test('desktop pet wires Focus Pet Cloud account IPC into the chat surface', () => {
   const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
   const preload = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'preload.js'), 'utf8');
@@ -3389,6 +3437,10 @@ test('desktop pet wires Focus Pet Cloud account IPC into the chat surface', () =
   assert.match(renderer, /chatState\.websocketUrl/);
   assert.match(renderer, /registerCloudChatAccount/);
   assert.match(renderer, /addCloudChatFriend/);
+  assert.match(renderer, /cloudChatConnectionStatus/);
+  assert.match(renderer, /function chatSocketOpen\(\)/);
+  assert.match(renderer, /Cloud 正在连接/);
+  assert.match(renderer, /chatCallAudio\.disabled = isCloud \? !signedIn \|\| !hasFriend \|\| !socketReady : false/);
   assert.match(indexHtml, /id="cloudChatAccount"/);
   assert.match(indexHtml, /id="cloudFriendCode"/);
   assert.match(indexHtml, /wss:\/\/reecewong520--focus-pet-cloud-cloud\.modal\.run/);
@@ -3417,6 +3469,16 @@ test('Focus Pet Cloud pairs users by friend code with reciprocal friendship', ()
     ['user_bob', 'user_alice']
   ]);
   assert.deepEqual(cloudService.clientStateForUser({ userId: 'user_alice' }, pair.state).friends.map(friend => friend.id), ['user_bob']);
+});
+
+test('Focus Pet Cloud refreshes peer state when friends or sockets change', () => {
+  const source = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'cloud-service.js'), 'utf8');
+
+  assert.match(source, /function broadcastStateToUserAndFriends\(userId, state = loadState\(\)\)/);
+  assert.match(source, /broadcastStateToUserAndFriends\(auth\.userId, saved\)/);
+  assert.match(source, /if \(result\.friend\?\.id\) broadcastStateToUserAndFriends\(result\.friend\.id, saved\)/);
+  assert.match(source, /socket\.on\('close', \(\) => \{[\s\S]*broadcastStateToUserAndFriends\(auth\.userId, loadState\(\)\)/);
+  assert.match(source, /return jsonResponse\(res, status, \{ ok: false, error: result\.error \}\)/);
 });
 
 test('Focus Pet Cloud validates one-to-one WebRTC signaling between friends', () => {

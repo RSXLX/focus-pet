@@ -12,12 +12,24 @@ v1.1 只闭合三条主线：
 2. 自我检查：用户主动或开启后，通过 Focus Pet Cloud 里的 StepFun key 检查自己的屏幕，不需要用户配置 key。
 3. 好友陪伴：用户下载后拥有自己的 ID / 好友码，可以和另一个人语音、视频。
 
+## 当前落地状态
+
+更新时间：2026-07-07
+
+- Phase 1 已闭合：桌面端默认使用 `screenCheckTransport: 'auto'` 和线上 Focus Pet Cloud `/api/screen-check`，新用户不需要本机 StepFun key；屏幕检查默认只回到本机，不启动本地聊天服务，不保存截图到聊天媒体。只有用户把“好友可见性”显式改成“好友记录屏幕分析摘要”时，才会发布屏幕摘要。
+- Phase 2 已接入完整桌面 Pet：聊天面板默认使用 Cloud 账号，支持创建 ID、显示好友码、添加好友码、持久化本机账号、Cloud WebSocket 信令、语音和视频按钮。Cloud 模式会显示“正在连接 / 已连接 / 已断开 / 连接异常”，通话按钮只在账号、好友和 socket 都可用时启用。
+- Phase 2 可靠性补齐：无效好友码会返回明确错误，不再显示成添加成功；Cloud 用户上线、下线和添加好友后会向本人和好友广播最新 state，用于刷新在线状态。
+- Phase 3 已部署：Modal `focus-pet-cloud` 已挂载 StepFun Secret 和独立 TURN Secret；`/healthz` 返回 `screenCheck.enabled=true`、`rtc.configValid=true`、`rtc.hasTurn=true`。
+- Phase 4 当前按产品决策跳过 Apple Developer ID 签名和 notarization，仅保留 ad-hoc signed DMG/ZIP 发布路径；公开文档必须继续说明 macOS 首次打开可能出现 Gatekeeper 提示。
+- 线上验证已跑通：`cloud-health`、`cloud:turn:verify -- --skip-api-ice`、`cloud:smoke -- --skip-screen-check`、完整 `cloud:smoke` 均通过。
+
 ## 暂缓范围
 
 以下内容先不做，避免继续扩大复杂度：
 
 - 暂停继续生成更多 GIF / 更多动作，等核心闭环完成后再补。
 - 暂停 Windows 正式发布承诺，先把 macOS Apple Silicon 做稳定。
+- 暂停 Apple Developer ID 签名和 notarization；当前用户要求只做无需公证的正式 GitHub Release 包。
 - 暂停后台管理台、团队系统、订阅、排行榜、复杂数据分析。
 - 暂停 Postgres / Redis，多用户量没有起来前继续单 Modal 容器。
 - 不做隐藏监控，不做内部角色命名的公开产品逻辑，只保留“自我检查 + 可选好友陪伴”。

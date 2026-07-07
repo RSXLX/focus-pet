@@ -684,6 +684,7 @@ let chatPingTimer;
 let chatReconnectTimer;
 let chatSocketEnabled = false;
 let chatState = { source: 'cloud', signedIn: false, friends: [], messages: [], activities: {}, activityLog: [], self: { id: 'cloud-guest', name: '我', friendCode: '' }, authToken: '', websocketUrl: '', iceServers: [] };
+let cloudChatConnectionStatus = 'idle';
 let petGifItems = [];
 let mediaMode = 'image';
 let mediaRecorder;
@@ -5588,6 +5589,19 @@ function cloudChatSignedIn(state = chatState) {
   return isCloudChatState(state) && Boolean(state.signedIn && state.authToken && state.self?.id && state.self.id !== 'cloud-guest');
 }
 
+function chatSocketOpen() {
+  return chatSocket?.readyState === WebSocket.OPEN;
+}
+
+function cloudChatConnectionLabel() {
+  if (!cloudChatSignedIn()) return '';
+  if (cloudChatConnectionStatus === 'connected') return 'Cloud 已连接';
+  if (cloudChatConnectionStatus === 'connecting') return 'Cloud 正在连接';
+  if (cloudChatConnectionStatus === 'error') return 'Cloud 连接异常';
+  if (cloudChatConnectionStatus === 'disconnected') return 'Cloud 已断开，正在重连';
+  return 'Cloud 已登录';
+}
+
 function normalizeCloudFriend(friend = {}) {
   return {
     id: String(friend.id || ''),
@@ -5624,7 +5638,7 @@ function renderCloudChatAccount() {
   const signedIn = cloudChatSignedIn();
   const friendCode = chatState.self?.friendCode || '';
   cloudChatStatus.textContent = signedIn
-    ? `${chatState.self?.name || '我'} · Cloud 已连接`
+    ? `${chatState.self?.name || '我'} · ${cloudChatConnectionLabel()}`
     : (chatState.error ? `Cloud 需要重新连接：${chatState.error}` : '创建 ID 后显示好友码');
   cloudFriendCode.textContent = friendCode ? `好友码 ${friendCode}` : '好友码 -';
   cloudRegisterButton.disabled = signedIn;
@@ -5638,14 +5652,15 @@ function syncCloudChatControls() {
   const isCloud = isCloudChatState();
   const signedIn = cloudChatSignedIn();
   const hasFriend = Boolean(selectedChatFriendId());
+  const socketReady = !isCloud || chatSocketOpen();
   chatInput.disabled = isCloud;
   chatInput.placeholder = isCloud ? 'Cloud 模式先支持语音/视频' : '发消息';
   imageButton.disabled = isCloud;
   fileButton.disabled = isCloud;
   petGifButton.disabled = isCloud;
   voiceModeButton.disabled = isCloud;
-  chatCallAudio.disabled = isCloud ? !signedIn || !hasFriend : false;
-  chatCallVideo.disabled = isCloud ? !signedIn || !hasFriend : false;
+  chatCallAudio.disabled = isCloud ? !signedIn || !hasFriend || !socketReady : false;
+  chatCallVideo.disabled = isCloud ? !signedIn || !hasFriend || !socketReady : false;
   revokeSessionButton.hidden = isCloud;
 }
 
@@ -5683,18 +5698,27 @@ function connectChatSocket() {
   let url = '';
   if (isCloudChatState()) {
     if (!cloudChatSignedIn() || !chatState.websocketUrl) {
+      cloudChatConnectionStatus = 'idle';
       renderCloudChatAccount();
       syncCloudChatControls();
       return;
     }
+    cloudChatConnectionStatus = 'connecting';
     url = chatState.websocketUrl;
   } else {
     const token = encodeURIComponent(chatState.authToken || '');
     const peerId = encodeURIComponent(chatState.self?.id || 'pet-owner');
     url = `ws://127.0.0.1:${chatState.port}?token=${token}&peerId=${peerId}`;
   }
+  renderCloudChatAccount();
+  syncCloudChatControls();
   chatSocket = new WebSocket(url);
   chatSocket.onopen = () => {
+    if (isCloudChatState()) {
+      cloudChatConnectionStatus = 'connected';
+      renderCloudChatAccount();
+      syncCloudChatControls();
+    }
     if (chatPingTimer) clearInterval(chatPingTimer);
     chatPingTimer = setInterval(() => chatSocket?.readyState === WebSocket.OPEN && chatSocket.send(JSON.stringify({ type: 'ping' })), 15000);
   };
@@ -5706,6 +5730,7 @@ function connectChatSocket() {
       return;
     }
     if (data.event === 'state') {
+      if (isCloudChatState()) cloudChatConnectionStatus = 'connected';
       if (isCloudChatState()) mergeCloudRealtimeState(data.payload);
       else chatState = data.payload;
       renderFriends();
@@ -5741,10 +5766,21 @@ function connectChatSocket() {
     }
     if (data.event === 'error') message.textContent = `聊天错误：${data.payload}`;
   };
+  chatSocket.onerror = () => {
+    if (!isCloudChatState()) return;
+    cloudChatConnectionStatus = 'error';
+    renderCloudChatAccount();
+    syncCloudChatControls();
+  };
   chatSocket.onclose = () => {
     if (chatPingTimer) clearInterval(chatPingTimer);
     chatPingTimer = null;
     chatSocket = null;
+    if (isCloudChatState()) {
+      cloudChatConnectionStatus = cloudChatSignedIn() ? 'disconnected' : 'idle';
+      renderCloudChatAccount();
+      syncCloudChatControls();
+    }
     if (!chatSocketEnabled) return;
     chatReconnectTimer = setTimeout(connectChatSocket, 2000);
   };
@@ -5859,6 +5895,11 @@ function cancelChatRtcNotice() {
 async function requestChatCall(mode) {
   if (isCloudChatState() && !cloudChatSignedIn()) {
     message.textContent = '先创建我的 ID，再发起通话。';
+    return;
+  }
+  if (isCloudChatState() && !chatSocketOpen()) {
+    message.textContent = 'Cloud 正在连接，稍后再发起通话。';
+    connectChatSocket();
     return;
   }
   if (!selectedChatFriendId()) {

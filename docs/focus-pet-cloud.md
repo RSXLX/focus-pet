@@ -1,11 +1,13 @@
 # Focus Pet Cloud
 
-Focus Pet Cloud 是 Focus Pet 的公网后端方案，用于让下载用户拥有自己的稳定 ID，并支持两个人之间的文字、语音和视频连接。
+Focus Pet Cloud 是 Focus Pet 的公网后端方案，用于让下载用户拥有自己的稳定 ID，并支持两个人之间的语音和视频连接。
 
 ## 核心职责
 
 - 用户注册：生成稳定 `userId`、公开 `friendCode` 和设备绑定 auth token。
 - 好友配对：通过对方 `friendCode` 建立双向好友关系。
+- 在线刷新：用户上线、下线或添加好友后，Cloud 会向本人和好友广播最新 state。
+- 错误反馈：无效好友码会返回明确错误，桌面端不会把失败显示成添加成功。
 - WebSocket 信令：转发 `call-invite`、`rtc-offer`、`rtc-answer`、`rtc-ice` 等 WebRTC 信令。
 - WebRTC 通话：语音和视频媒体由 WebRTC 在客户端之间传输，后端不保存音视频流。
 - TURN 配置：复杂 NAT、公司网络、手机流量或跨运营商场景需要 TURN，提高语音/视频接通率。
