@@ -18,20 +18,20 @@ Focus Pet is a medium-privacy desktop pet app for people who want lightweight fo
 ## Project Status
 
 - Public repository: [RSXLX/focus-pet](https://github.com/RSXLX/focus-pet)
-- Current release: [v1.1.2](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2)
+- Current release: [v1.1.3](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.3)
 - Published binary: macOS Apple Silicon DMG and ZIP
 - Source support: macOS and Windows development scripts are included
 - Signing status: public macOS builds are ad-hoc signed and not Apple-notarized yet
 
 ## Downloads
 
-Latest release: [v1.1.2](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2)
+Latest release: [v1.1.3](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.3)
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2) | Download the DMG for the full desktop pet app. |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2) | ZIP archive is also available. |
-| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2) | SHA-256 manifest is included. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.3) | Download the DMG for the full desktop pet app. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.3) | ZIP archive is also available. |
+| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.3) | SHA-256 manifest is included. |
 
 macOS note: the current public build is ad-hoc signed but not Apple-notarized. On first launch, macOS Gatekeeper may require manual approval in System Settings or via right-click Open.
 
@@ -120,13 +120,14 @@ node scripts/release-preflight.js --check diagnostics-summary-output
 node scripts/release-preflight.js --check diagnostics-bundle-output
 node scripts/release-preflight.js --check cloud-health
 npm run cloud:smoke
+npm run call:acceptance -- --side-a path/to/alice-summary.txt --side-b path/to/bob-summary.txt --mode video
 node scripts/release-preflight.js --check error-log
 node scripts/release-preflight.js --run=fast
 ```
 
 The `diagnostics-summary-output` gate validates `summarySchemaValid`, `summaryGeneratedAtValid`, `未知顶层字段数量`, secret-field checks such as `json-secret-field`, raw-field protection from `rawIssueKey` to `json-raw-field`, empty acceptance checks such as `emptyAcceptanceSections`, and key naming consistency between `snake_case` and `kebab-case`. Output marked `未通过` must be fixed before release, including diagnostic labels that contain 冒号、括号、破折号或空格.
 
-The `diagnostics-bundle-output` gate checks `summaryBoundaryIssues` and `summarySchemaValid`. The `cloud-health` gate checks Focus Pet Cloud `/healthz`, including server-side screen checks, TURN JSON validity, and TURN readiness. `npm run cloud:smoke` is a manual production smoke test that creates two temporary Cloud users, pairs them, opens WSS, sends one call invite, and calls `/api/screen-check`; it is not part of automatic preflight because it writes production Cloud data. The `error-log` gate reports `openUnresolvedEntries`. The 诊断包 includes the 最新 20 个 relevant error records for review without exposing high-sensitivity content.
+The `diagnostics-bundle-output` gate checks `summaryBoundaryIssues` and `summarySchemaValid`. The `cloud-health` gate checks Focus Pet Cloud `/healthz`, including server-side screen checks, TURN JSON validity, and TURN readiness. `npm run cloud:smoke` is a manual production smoke test that creates two temporary Cloud users, pairs them, opens WSS, sends and persists Cloud text/image messages, sends one call invite, and calls `/api/screen-check`; it is not part of automatic preflight because it writes production Cloud data. `npm run call:acceptance` turns the two copied desktop call-status summaries from a real two-computer test into a local Markdown acceptance record, without storing friend codes, tokens, SDP, ICE candidates, TURN URLs, IP addresses, or device IDs. The `error-log` gate reports `openUnresolvedEntries`. The 诊断包 includes the 最新 20 个 relevant error records for review without exposing high-sensitivity content.
 
 ## Build Release Assets
 
@@ -222,7 +223,7 @@ docs/
 | Diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
 | Focus Pet Cloud | [docs/focus-pet-cloud.md](docs/focus-pet-cloud.md) |
 | Optimization plan | [docs/optimization-plan.md](docs/optimization-plan.md) |
-| Release notes | [docs/releases/v1.1.2.md](docs/releases/v1.1.2.md) |
+| Release notes | [docs/releases/v1.1.3.md](docs/releases/v1.1.3.md) |
 
 ## Development Notes
 

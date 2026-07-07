@@ -57,7 +57,7 @@ const PET_GIF_ASSETS = [
 const WINDOW_SIZES = {
   compact: { width: 220, height: 270 },
   expanded: { width: 540, height: 520 },
-  client: { width: 820, height: 720 }
+  client: { width: 1120, height: 820 }
 };
 
 function getChatService() {

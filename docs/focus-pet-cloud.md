@@ -154,6 +154,8 @@ REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:remote-
 
 返回客户端创建 `RTCPeerConnection` 所需的 ICE server 配置。该接口需要认证。
 
+发布前可用 `npm run cloud:turn:verify` 检查 `/healthz` 和认证后的 ICE 下发结果；可用 `npm run cloud:webrtc:verify` 注册两名临时 Cloud 用户，连接生产 WebSocket 信令，并在隐藏 Electron 浏览器里强制 `iceTransportPolicy: 'relay'` 建立 WebRTC 媒体连接。该脚本会用合成音频/视频轨道验证远端轨道到达和 relay candidate pair，但仍不能替代两台真实电脑、不同网络下的人工语音/视频验收。真实双机验收时，两端可点击桌面端通话状态行复制摘要，再用 `npm run call:acceptance -- --side-a alice.txt --side-b bob.txt --mode video` 生成本地 Markdown 记录；该记录只保存模式、状态、远端媒体、连接和 relay 结果，不保存好友码、token、SDP、ICE candidate、TURN URL、IP 或设备 ID。
+
 ### `POST /api/screen-check`
 
 桌面端屏幕检查代理入口。该接口不要求桌面端携带 StepFun key；Cloud 会读取后端环境变量 `FOCUS_PET_CLOUD_STEPFUN_API_KEY`、`FOCUS_PET_CLOUD_SCREEN_LLM_API_KEY`、`FOCUS_PET_SCREEN_LLM_API_KEY`、`FOCUS_PET_STEPFUN_API_KEY`、`STEPFUN_API_KEY` 或 `STEP_API_KEY`。
@@ -321,6 +323,6 @@ GitHub Pages 不能承载 Node/WebSocket 后端，也不能作为 Focus Pet Clou
 8. 开启屏幕检查时，桌面端调用 Cloud `/api/screen-check`，不需要用户配置或持有 StepFun key。
 9. 如果只需要账号、好友和通话能力，可单独构建轻量聊天/通话客户端：`REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:remote-client`。
 
-生产 Cloud 的非破坏性健康检查使用 `node scripts/release-preflight.js --check cloud-health`。发布前人工 smoke test 使用 `npm run cloud:smoke`；它会注册两个临时生产 Cloud 用户、互加好友、连接 WSS、转发一次通话邀请，并调用 `/api/screen-check`，因此不会自动加入 `release:preflight -- --run full`。
+生产 Cloud 的非破坏性健康检查使用 `node scripts/release-preflight.js --check cloud-health`。发布前人工 smoke test 使用 `npm run cloud:smoke`；它会注册两个临时生产 Cloud 用户、互加好友、连接 WSS、发送并持久化 Cloud 文字/图片消息、转发一次通话邀请，并调用 `/api/screen-check`，因此不会自动加入 `release:preflight -- --run full`。
 
 当前仓库已经具备 Cloud 后端、Modal 部署入口、公开 `/client` 聊天/通话客户端入口、完整桌宠内的 Cloud 账号/好友入口、稳定 ID、6 位数字好友码、文字/图片消息、认证 WebSocket 信令、WebRTC TURN 配置接口、后端屏幕检查代理，以及完整桌宠 macOS DMG/ZIP release 脚本。聊天/通话客户端 release 脚本仅作为可选发布面保留。

@@ -15,16 +15,16 @@
     <section class="bubble">
       <div class="toolbar">
         <button id="collapse" title="收起">−</button>
-        <button id="chatToggle" title="聊天" aria-pressed="false">聊天</button>
+        <button id="chatToggle" title="消息" aria-pressed="false">消息</button>
         <button id="tasksToggle" title="今日任务" aria-pressed="false">任务</button>
-        <button id="reviewToggle" title="今日复盘" aria-pressed="false">复盘</button>
-        <button id="onboardingToggle" title="新手引导" aria-pressed="false">引导</button>
+        <button id="reviewToggle" title="今日复盘" aria-pressed="false" hidden>复盘</button>
+        <button id="onboardingToggle" title="新手引导" aria-pressed="false" hidden>引导</button>
         <button id="settingsToggle" title="设置" aria-pressed="false">设置</button>
-        <button id="openData" title="打开数据目录">数据</button>
+        <button id="openData" title="打开数据目录" hidden>数据</button>
         <button id="quit" title="退出">×</button>
       </div>
       <p id="message">我正在醒来，马上帮你盯一下状态。</p>
-      <small id="context">只读取当前 App 和窗口标题，不截屏。</small>
+      <small id="context">当前 App/标题 · 不截屏</small>
     </section>
 
     <section id="panel" class="panel hidden">
@@ -53,7 +53,7 @@
       <div id="onboardingPanel" class="onboarding-panel hidden" data-onboarding-complete="false">
         <div class="onboarding-summary">
           <strong>3 分钟完成基础模式</strong>
-          <span>高级能力默认关闭，需要你进入对应设置后手动开启。</span>
+          <span>基础先用，高级手动开。</span>
         </div>
 
         <section class="onboarding-card" data-onboarding-mode="basic" data-onboarding-duration="under-3-minutes">
@@ -62,10 +62,10 @@
             <span>任务 + 宠物 + 前台 App 判断</span>
           </header>
           <dl class="onboarding-facts">
-            <div><dt>会采集什么</dt><dd>当前前台 App 名称、窗口标题、任务状态和宠物互动。</dd></div>
-            <div><dt>不会采集什么</dt><dd>不会截屏，不会读取文件内容，不会开启外部通话。</dd></div>
-            <div><dt>数据保存在哪里</dt><dd>本机 `~/.hermes/focus-watchdog` 目录。</dd></div>
-            <div><dt>是否会外发</dt><dd>不会外发，除非之后主动开启 AI 或社交能力。</dd></div>
+            <div><dt>采集</dt><dd>前台 App、窗口标题、任务和宠物互动。</dd></div>
+            <div><dt>不做</dt><dd>不截屏，不读文件，不自动通话。</dd></div>
+            <div><dt>保存</dt><dd>本机数据目录。</dd></div>
+            <div><dt>外发</dt><dd>默认不外发。</dd></div>
           </dl>
           <button id="completeBasicOnboarding" type="button" data-onboarding-complete="basic">完成基础模式</button>
         </section>
@@ -76,10 +76,10 @@
             <span>工作/学习/娱乐关键词 + 复盘</span>
           </header>
           <dl class="onboarding-facts">
-            <div><dt>会采集什么</dt><dd>基础模式数据、关键词规则、App 规则和近 24 小时活动统计。</dd></div>
-            <div><dt>不会采集什么</dt><dd>不会自动截屏，不会自动打开社交监督或通话。</dd></div>
-            <div><dt>数据保存在哪里</dt><dd>任务、设置和活动摘要保存在本机数据目录。</dd></div>
-            <div><dt>是否会外发</dt><dd>复盘 LLM 只有在配置密钥后才会发起请求。</dd></div>
+            <div><dt>采集</dt><dd>基础数据、关键词规则和活动统计。</dd></div>
+            <div><dt>不做</dt><dd>不自动截屏，不自动社交或通话。</dd></div>
+            <div><dt>保存</dt><dd>任务、设置和摘要保存在本机。</dd></div>
+            <div><dt>外发</dt><dd>只在手动启用 AI 后请求。</dd></div>
           </dl>
           <button id="openEnhancedOnboarding" type="button">配置判断规则</button>
         </section>
@@ -90,10 +90,10 @@
             <span>屏幕检查 + 社交监督 + WebRTC</span>
           </header>
           <dl class="onboarding-facts">
-            <div><dt>会采集什么</dt><dd>你主动开启后，可能包含屏幕缩略图、外部会话消息和通话信令。</dd></div>
-            <div><dt>不会采集什么</dt><dd>不会默认开启屏幕检查，不会默认发起社交监督或 WebRTC 通话。</dd></div>
-            <div><dt>数据保存在哪里</dt><dd>聊天、媒体记录和检查摘要保存在本机或你配置的持久化目录。</dd></div>
-            <div><dt>是否会外发</dt><dd>仅在你启用 LLM 请求或打开外部聊天连接后外发。</dd></div>
+            <div><dt>采集</dt><dd>手动开启后才处理截图、消息或通话信令。</dd></div>
+            <div><dt>不做</dt><dd>不默认检查屏幕，不默认通话。</dd></div>
+            <div><dt>保存</dt><dd>聊天、媒体和摘要存在本机或配置目录。</dd></div>
+            <div><dt>外发</dt><dd>只在启用 AI 或 Cloud 后外发。</dd></div>
           </dl>
           <button id="openAdvancedOnboarding" type="button">查看高级设置</button>
         </section>
@@ -132,7 +132,7 @@
         </section>
 
         <section id="settingsGroupAi" class="settings-group" data-settings-group="ai" data-setting-risk="ai" aria-labelledby="settingsTabAi" hidden>
-          <div class="settings-risk-note">屏幕检查和 LLM 请求集中在这里。默认使用 StepFun 视觉检查，也可切换 Ollama 或本机 OpenAI-compatible 服务。</div>
+          <div class="settings-risk-note">AI 检查和复盘；默认 Cloud，也可本机。</div>
           <label class="setting-line"><span>云端请求</span>
             <select id="settingLlmCloudMode">
               <option value="allowed">允许云端</option>
@@ -188,7 +188,7 @@
           </label>
           <label class="setting-line"><span>媒体上限 MB</span><input id="settingMediaMb" type="number" min="1" max="100" /></label>
           <label class="setting-line"><span>语音快捷键</span><input id="settingVoiceShortcut" type="text" placeholder="Alt+R" maxlength="40" spellcheck="false" /></label>
-          <div class="settings-risk-note">好友码、外部会话和通话配置在聊天面板管理；对方不会回读你的截图分析结果。</div>
+          <div class="settings-risk-note">好友码和通话在聊天面板；截图分析不发给好友。</div>
         </section>
 
         <section id="settingsGroupAdvanced" class="settings-group" data-settings-group="advanced" data-setting-risk="advanced" aria-labelledby="settingsTabAdvanced" hidden>
@@ -355,6 +355,7 @@
         <button id="chatRtcContinue" type="button">继续通话</button>
         <button id="chatRtcCancel" type="button">取消</button>
       </div>
+      <div id="chatCallStatus" class="chat-call-status" role="button" aria-live="polite" tabindex="0" hidden>未通话</div>
       <div id="chatCallStage" class="chat-call-stage hidden">
         <video id="localCallVideo" autoplay muted playsinline></video>
         <video id="remoteCallVideo" autoplay playsinline></video>
@@ -362,7 +363,6 @@
           <button id="chatCallEnd" type="button">挂断</button>
         </div>
       </div>
-      <div id="chatCallStatus" class="chat-call-status" role="status" aria-live="polite" hidden>未通话</div>
     </section>
   </main>
   <script src="intervention-policy.js"></script>

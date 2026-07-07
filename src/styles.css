@@ -130,7 +130,7 @@ html, body {
 #reviewToggle,
 #onboardingToggle,
 #openData {
-  display: none;
+  display: none !important;
 }
 
 button {
@@ -215,8 +215,8 @@ button:active { transform: translateY(0) scale(.98); }
   left: 12px;
   right: 12px;
   top: 10px;
-  height: 88px;
-  padding: 12px 16px;
+  height: 92px;
+  padding: 12px 18px;
   border-radius: 20px;
 }
 
@@ -226,20 +226,30 @@ button:active { transform: translateY(0) scale(.98); }
 
 .pet[data-window-mode="client"] .toolbar {
   justify-content: flex-start;
-  gap: 8px;
+  gap: 10px;
 }
 
 .pet[data-window-mode="client"] button {
-  padding: 8px 12px;
-  font-size: 14px;
+  padding: 10px 14px;
+  font-size: 17px;
 }
 
 .pet[data-window-mode="client"] #message {
-  font-size: 18px;
+  font-size: 22px;
   -webkit-line-clamp: 1;
 }
 
 .pet[data-window-mode="client"] #context {
+  display: none;
+}
+
+.pet[data-window-mode="panel"] #context,
+.pet[data-window-mode="panel"] .pet-stats {
+  display: none;
+}
+
+.pet.expanded:not([data-window-mode="client"]) #context,
+.pet.expanded:not([data-window-mode="client"]) .pet-stats {
   display: none;
 }
 
@@ -272,11 +282,11 @@ button:active { transform: translateY(0) scale(.98); }
 }
 
 .pet.expanded[data-window-mode="client"] .panel {
-  top: 110px;
+  top: 112px;
   bottom: 12px;
   left: 12px;
   right: 12px;
-  padding: 18px;
+  padding: 22px;
   border-radius: 20px;
 }
 .panel.hidden, .review.hidden, .chat-panel.hidden, .home-actions.hidden { display: none; }
@@ -1090,13 +1100,28 @@ select, .chat-compose input { flex: 1; min-height: 34px; padding: 9px 11px; bord
 .pet[data-window-mode="client"] .settings-panel,
 .pet[data-window-mode="client"] .onboarding-panel,
 .pet[data-window-mode="client"] .review {
-  gap: 12px;
-  font-size: 14px;
+  gap: 18px;
+  font-size: 18px;
+}
+
+.pet[data-window-mode="client"] .settings-tabs {
+  gap: 8px;
+  padding: 4px 0 8px;
 }
 
 .pet[data-window-mode="client"] .settings-tab {
-  min-height: 34px;
-  font-size: 14px;
+  min-height: 48px;
+  font-size: 17px;
+}
+
+.pet[data-window-mode="client"] .settings-group {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  align-items: start;
+}
+
+.pet[data-window-mode="client"] .settings-group[hidden] {
+  display: none;
 }
 
 .pet[data-window-mode="client"] .setting-line,
@@ -1110,18 +1135,40 @@ select, .chat-compose input { flex: 1; min-height: 34px; padding: 9px 11px; bord
 .pet[data-window-mode="client"] .onboarding-card header span,
 .pet[data-window-mode="client"] .onboarding-facts dt,
 .pet[data-window-mode="client"] .onboarding-facts dd {
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .pet[data-window-mode="client"] input,
 .pet[data-window-mode="client"] select,
 .pet[data-window-mode="client"] textarea {
-  min-height: 36px;
-  font-size: 14px;
+  min-height: 48px;
+  font-size: 17px;
 }
 
 .pet[data-window-mode="client"] .setting-block textarea {
-  min-height: 86px;
+  min-height: 150px;
+}
+
+.pet[data-window-mode="client"] h2 {
+  font-size: 26px;
+}
+
+.pet[data-window-mode="client"] .setting-line {
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+}
+
+.pet[data-window-mode="client"] .setting-block,
+.pet[data-window-mode="client"] .setting-note,
+.pet[data-window-mode="client"] .settings-risk-note,
+.pet[data-window-mode="client"] .settings-actions,
+.pet[data-window-mode="client"] .permission-guide {
+  grid-column: 1 / -1;
+}
+
+.pet[data-window-mode="client"] .settings-risk-note {
+  padding: 10px 12px;
+  line-height: 1.45;
+  white-space: normal;
 }
 
 #platformStatus {
@@ -2113,10 +2160,11 @@ select, .chat-compose input { flex: 1; min-height: 34px; padding: 9px 11px; bord
 
 .chat-call-stage video {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  height: clamp(88px, 18vh, 160px);
   border: 1px solid rgba(33,45,78,0.12);
   border-radius: 8px;
   background: #111827;
+  object-fit: cover;
 }
 
 .chat-call-actions {
@@ -2162,12 +2210,31 @@ select, .chat-compose input { flex: 1; min-height: 34px; padding: 9px 11px; bord
 }
 
 .chat-call-status {
-  position: absolute;
-  width: 1px;
-  height: 1px;
+  display: flex;
+  align-items: center;
+  margin-top: 7px;
+  min-height: 28px;
+  padding: 0 9px;
   overflow: hidden;
-  clip-path: inset(50%);
+  border: 1px solid rgba(52,199,89,0.20);
+  border-radius: 8px;
+  color: #166534;
+  background: rgba(240,253,244,0.82);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.25;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: copy;
+}
+
+.chat-call-status[hidden] {
+  display: none;
+}
+
+.chat-call-status:focus-visible {
+  outline: 2px solid rgba(0,113,227,0.48);
+  outline-offset: 2px;
 }
 
 .chat-messages {

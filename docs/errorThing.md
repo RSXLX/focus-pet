@@ -10688,3 +10688,108 @@
 - 上下文：完成 v1.1.2 Cloud 文本/图片消息和 6 位好友码部署后，首次 `cloud-health` 成功，但后续 health 请求进入 Modal CPU worker 调度等待；日志显示旧容器仍有长 WebSocket 连接，新容器等待调度。
 - 可能原因：Modal 单容器部署在滚动切换期间被旧长连接和 worker 调度等待影响；验证脚本只用 Promise race 标记超时，没有 abort 底层 fetch。
 - 解决状态：已解决（执行 `modal app rollover focus-pet-cloud --strategy recreate` 后 health/TURN 通过；`verify-cloud-turn.js` 改为 20 秒默认超时并用 AbortController 取消 fetch；线上 `/api/messages` 文字和图片 smoke 通过）
+
+## [2026-07-07 12:15:20 CST]
+- 问题描述：设置客户端短文案调整后，`npm run verify:pet-render` 的 `settings-open-feedback` 场景仍按旧提示文案校验导致失败。
+- 发生位置：`scripts/verify-pet-render.js` / `settingsOpenFeedbackOk`
+- 上下文：本次将设置顶部提示从“我看着设置面板，提醒节奏调顺就继续任务。”改为“设置客户端已打开，保存后立即生效。”，但渲染验证脚本未同步该断言。
+- 可能原因：UI 文案压缩后遗漏 QA 脚本的精确文本匹配。
+- 解决状态：已解决（已同步 `settingsOpenFeedbackOk` 为新短文案，并重新运行渲染验证）
+
+## [2026-07-07 12:34:53 CST]
+- 问题描述：新增 `cloud:webrtc:verify` 后首次运行 `npm run cloud:webrtc:verify -- --mode video --timeout-ms 45000` 长时间无输出且未按脚本超时退出，需要人工中断。
+- 发生位置：`scripts/test-cloud-webrtc-relay.js`
+- 上下文：脚本已启动隐藏 Electron、注册临时 Cloud 用户并进入 WebRTC relay 验证，但父进程超过预期超时后仍未退出；本次用 Ctrl-C 中断。
+- 可能原因：隐藏 Electron renderer 内异步错误或 WebRTC 等待路径没有正确回传到主进程，外层超时没有强制销毁窗口和退出子进程。
+- 解决状态：未解决
+
+## [2026-07-07 14:13:06 CST]
+- 问题描述：新增 `cloud:webrtc:verify` 后首次运行 `npm run cloud:webrtc:verify -- --mode video --timeout-ms 45000` 长时间无输出且未按脚本超时退出，需要人工中断。
+- 发生位置：`scripts/test-cloud-webrtc-relay.js`
+- 上下文：已修正 Electron 子进程入口条件，Electron 环境下即使 `require.main !== module` 也会执行 `main()`；父进程 spawnSync 遇到 timeout error 时返回非零；Cloud 注册/加好友请求改为 AbortController 超时。复测 `npm run cloud:webrtc:verify -- --mode video --timeout-ms 45000` 已通过，远端收到 audio/video 轨道，selected candidate pair 使用 relay。
+- 可能原因：Electron 作为脚本宿主时入口没有被调用，父进程 timeout error 又没有强制转为失败退出码；Cloud REST 请求也缺少 abort 兜底。
+- 解决状态：已解决
+
+## [2026-07-07 14:31:11 CST]
+- 问题描述：新增通话验收摘要静态断言后，`node --test test/core.test.js --test-name-pattern "desktop chat UI keeps a minimal toolbar|WebRTC call cleanup clears pending notices"` 失败。
+- 发生位置：`test/core.test.js` / `chatCallAcceptanceSummary` 敏感词断言
+- 上下文：断言使用未分组 alternation，导致 `friendCode|authToken|sdp|iceServers` 扫描整个 renderer，而不是只扫描 `chatCallAcceptanceSummary()`。
+- 可能原因：正则作用域写错，测试把合法的 Cloud/WebRTC 代码误判为摘要泄漏。
+- 解决状态：未解决
+
+## [2026-07-07 14:34:04 CST]
+- 问题描述：设置客户端和悬浮窗精简后，`node --test test/core.test.js --test-name-pattern "desktop chat UI keeps a minimal toolbar|desktop UI keeps the pet float compact"` 失败。
+- 发生位置：`test/core.test.js` / 设置社交提示文案断言；release preflight error-log gate
+- 上下文：设置页说明从“截图分析不回传给好友”压缩为“截图分析不发给好友”，旧断言未同步；同时错误日志最新记录仍为未解决，release preflight 正常拦截。
+- 可能原因：UI 文案压缩和错误日志闭环没有跟测试一起收尾。
+- 解决状态：未解决
+
+## [2026-07-07 14:36:15 CST]
+- 问题描述：新增通话验收摘要静态断言后，`node --test test/core.test.js --test-name-pattern "desktop chat UI keeps a minimal toolbar|WebRTC call cleanup clears pending notices"` 失败。
+- 发生位置：`test/core.test.js` / `chatCallAcceptanceSummary` 敏感词断言
+- 上下文：已将敏感词检查作用域限定到 `chatCallAcceptanceSummary()` 到 `copyChatCallAcceptanceSummary()` 之间，避免扫描正常 Cloud/WebRTC 实现代码。
+- 可能原因：原正则 alternation 未分组且作用域过大。
+- 解决状态：已解决
+
+## [2026-07-07 14:36:15 CST]
+- 问题描述：设置客户端和悬浮窗精简后，`node --test test/core.test.js --test-name-pattern "desktop chat UI keeps a minimal toolbar|desktop UI keeps the pet float compact"` 失败。
+- 发生位置：`test/core.test.js` / 设置社交提示文案断言；release preflight error-log gate
+- 上下文：已同步设置社交提示文案断言为“截图分析不发给好友”，并追加本条已解决记录闭合 error-log gate。
+- 可能原因：UI 文案压缩后遗漏静态断言同步；错误日志 gate 需要最新状态为已解决。
+- 解决状态：已解决
+
+## [2026-07-07 14:37:10 CST]
+- 问题描述：复跑设置客户端相关测试时，`settings page presents screenshot analysis as screen check instead of monitoring` 仍失败。
+- 发生位置：`test/core.test.js` / AI 设置说明文案断言
+- 上下文：设置页说明从“屏幕检查与复盘 AI”压缩为“AI 检查和复盘；默认 Cloud，也可本机。”，旧断言未同步。
+- 可能原因：压缩设置页文案后遗漏另一处静态文案契约。
+- 解决状态：未解决
+
+## [2026-07-07 14:37:50 CST]
+- 问题描述：复跑设置客户端相关测试时，`settings page presents screenshot analysis as screen check instead of monitoring` 仍失败。
+- 发生位置：`test/core.test.js` / AI 设置说明文案断言
+- 上下文：已将静态断言同步为“AI 检查和复盘”，与设置页短文案一致。
+- 可能原因：压缩设置页文案后遗漏另一处静态文案契约。
+- 解决状态：已解决
+
+## [2026-07-07 14:38:03 CST]
+- 问题描述：完整 `npm run verify:pet-render` 失败，`offline-rest-feedback` 和 `bond-milestone-feedback` 仍显示复杂宠物状态卡。
+- 发生位置：`src/styles.css` / `scripts/verify-pet-render.js`
+- 上下文：产品运行路径会设置 `data-window-mode="panel"`，但渲染 QA 的部分 home 场景只有 `.expanded`，没有该 data 属性，导致 `.pet[data-window-mode="panel"] .pet-stats` 未命中。
+- 可能原因：悬浮窗精简 CSS 缺少无 `data-window-mode` 的展开态 fallback。
+- 解决状态：未解决
+
+## [2026-07-07 14:39:18 CST]
+- 问题描述：完整 `npm run verify:pet-render` 失败，`offline-rest-feedback` 和 `bond-milestone-feedback` 仍显示复杂宠物状态卡。
+- 发生位置：`src/styles.css` / `scripts/verify-pet-render.js`
+- 上下文：已新增 `.pet.expanded:not([data-window-mode="client"])` fallback 隐藏 `#context` 和 `.pet-stats`；复跑两个失败场景均通过。
+- 可能原因：悬浮窗精简 CSS 缺少无 `data-window-mode` 的展开态 fallback。
+- 解决状态：已解决
+
+## [2026-07-07 14:41:20 CST]
+- 问题描述：完整 `npm run verify:pet-render` 再次失败，多个 home/照料场景仍按“照料菜单必须位于状态卡上方”校验。
+- 发生位置：`scripts/verify-pet-render.js` / `statsRect` 布局断言
+- 上下文：悬浮窗精简后 `.pet-stats` 被隐藏，`statsRect` 为 0，旧断言 `rect.bottom <= statsRect.top - 4` 不再成立。
+- 可能原因：渲染 QA 仍绑定旧状态卡布局，而不是新的“状态卡隐藏时只校验核心入口/菜单”的契约。
+- 解决状态：未解决
+
+## [2026-07-07 14:43:05 CST]
+- 问题描述：完整 `npm run verify:pet-render` 再次失败，多个 home/照料场景仍按“照料菜单必须位于状态卡上方”校验。
+- 发生位置：`scripts/verify-pet-render.js` / `statsRect` 布局断言
+- 上下文：已新增 `abovePetStatsOk()`，状态卡隐藏时跳过旧的上方布局断言，状态卡可见时仍检查不重叠；完整 `npm run verify:pet-render` 已通过。
+- 可能原因：渲染 QA 仍绑定旧状态卡布局，而不是新的“状态卡隐藏时只校验核心入口/菜单”的契约。
+- 解决状态：已解决
+
+## [2026-07-07 14:51:13 CST]
+- 问题描述：新增通话人工验收记录测试后，`node --test test/core.test.js --test-name-pattern "call acceptance|Focus Pet Cloud provides a Modal"` 失败。
+- 发生位置：`test/core.test.js` / `call acceptance records validate real two-computer call summaries without storing sensitive data`
+- 上下文：验收记录正文包含“ICE candidate”作为不保存字段的说明文字，测试用 `/candidate/` 过宽匹配，把说明词误判成敏感值泄露。
+- 可能原因：敏感边界断言没有区分字段名说明和真实 candidate 值。
+- 解决状态：未解决
+
+## [2026-07-07 14:51:47 CST]
+- 问题描述：修复通话人工验收记录测试后，`node --test test/core.test.js --test-name-pattern "call acceptance|Focus Pet Cloud provides a Modal"` 仍失败。
+- 发生位置：`test/core.test.js` / `runErrorLogCheck(PROJECT_ROOT)`
+- 上下文：目标测试本身已通过，但上一条错误日志仍是“未解决”，release preflight 的 error-log gate 按设计阻断。
+- 可能原因：记录失败后没有追加对应的已解决收尾条目。
+- 解决状态：已解决（已收窄敏感断言，只检查真实泄露样例和值；本条用于闭合 error-log gate）

@@ -704,6 +704,15 @@ let chatLocalStreamPromise;
 let chatLocalStreamRequestMode = '';
 let chatCallId = '';
 let chatCallPeerId = '';
+let chatCallStatsTimer = null;
+let chatCallMediaState = {
+  mode: 'audio',
+  baseStatus: '未通话',
+  remoteKinds: [],
+  connectionState: '',
+  iceConnectionState: '',
+  relay: false
+};
 let pendingChatRtcAction = null;
 let pendingChatRtcMode = 'audio';
 let lastAutoPopupAt = 0;
@@ -5601,7 +5610,7 @@ async function showSettings() {
   setSettingsGroup(settingsPanel.dataset.activeSettingsGroup || 'basic');
   loadPermissionGuide();
   applySettingsSurfaceVitalEvent();
-  message.textContent = '我看着设置面板，提醒节奏调顺就继续任务。';
+  message.textContent = '设置客户端已打开，保存后立即生效。';
 }
 
 function isCloudChatState(state = chatState) {
@@ -5854,6 +5863,139 @@ function sendChatRealtime(type, payload = {}) {
   chatSocket.send(JSON.stringify(event));
 }
 
+function resetChatCallMediaState(mode = 'audio', baseStatus = '未通话') {
+  chatCallMediaState = {
+    mode: mode === 'video' ? 'video' : 'audio',
+    baseStatus: baseStatus || '未通话',
+    remoteKinds: [],
+    connectionState: '',
+    iceConnectionState: '',
+    relay: false
+  };
+  renderChatCallStatus();
+}
+
+function setChatCallStatus(baseStatus, options = {}) {
+  if (options.mode) chatCallMediaState.mode = options.mode === 'video' ? 'video' : 'audio';
+  chatCallMediaState.baseStatus = baseStatus || '未通话';
+  renderChatCallStatus();
+}
+
+function connectionLabel() {
+  const state = chatCallMediaState.connectionState || chatCallMediaState.iceConnectionState || '';
+  if (state === 'connected' || state === 'completed') return '已连接';
+  if (state === 'connecting' || state === 'checking') return '连接中';
+  if (state === 'failed') return '连接失败';
+  if (state === 'disconnected') return '连接中断';
+  return '';
+}
+
+function remoteMediaLabel() {
+  const kinds = new Set(chatCallMediaState.remoteKinds || []);
+  if (chatCallMediaState.mode === 'video' && kinds.has('audio') && kinds.has('video')) return '远端音视频';
+  if (kinds.has('video')) return '远端视频';
+  if (kinds.has('audio')) return '远端音频';
+  return '';
+}
+
+function renderChatCallStatus() {
+  if (!chatCallStatus) return;
+  const baseStatus = chatCallMediaState.baseStatus || '未通话';
+  const details = [
+    connectionLabel(),
+    remoteMediaLabel(),
+    chatCallMediaState.relay ? 'relay' : ''
+  ].filter(Boolean);
+  chatCallStatus.textContent = [baseStatus, ...details].join(' · ');
+  chatCallStatus.hidden = chatCallStatus.textContent === '未通话';
+  chatCallStatus.title = chatCallStatus.hidden ? '' : '点击复制通话验收状态';
+}
+
+function chatCallAcceptanceSummary() {
+  const status = String(chatCallStatus?.textContent || '').trim();
+  if (!status || status === '未通话') return '';
+  return [
+    'Focus Pet 通话验收状态',
+    `时间：${new Date().toISOString()}`,
+    `模式：${chatCallMediaState.mode === 'video' ? 'video' : 'audio'}`,
+    `状态：${status}`,
+    `远端媒体：${chatCallMediaState.remoteKinds.length ? chatCallMediaState.remoteKinds.join(',') : 'none'}`,
+    `连接：${chatCallMediaState.connectionState || chatCallMediaState.iceConnectionState || 'unknown'}`,
+    `Relay：${chatCallMediaState.relay ? 'yes' : 'unknown'}`,
+    `来源：${isCloudChatState() ? 'cloud' : 'local'}`
+  ].join('\n');
+}
+
+async function copyChatCallAcceptanceSummary() {
+  const summary = chatCallAcceptanceSummary();
+  if (!summary || typeof window.focusPet.copyText !== 'function') return;
+  await window.focusPet.copyText(summary);
+  message.textContent = '通话验收状态已复制。';
+}
+
+function updateChatRemoteMediaState(stream) {
+  const streams = [stream, remoteCallVideo?.srcObject].filter(Boolean);
+  const kinds = new Set(chatCallMediaState.remoteKinds || []);
+  for (const item of streams) {
+    if (typeof item.getAudioTracks === 'function' && item.getAudioTracks().some(track => track.readyState !== 'ended')) kinds.add('audio');
+    if (typeof item.getVideoTracks === 'function' && item.getVideoTracks().some(track => track.readyState !== 'ended')) kinds.add('video');
+  }
+  chatCallMediaState.remoteKinds = [...kinds].sort();
+  renderChatCallStatus();
+}
+
+async function selectedChatCandidatePairSummary(peer) {
+  if (!peer || typeof peer.getStats !== 'function') return null;
+  const stats = await peer.getStats();
+  let pair = null;
+  for (const report of stats.values()) {
+    if (report.type === 'transport' && report.selectedCandidatePairId) {
+      pair = stats.get(report.selectedCandidatePairId);
+      break;
+    }
+  }
+  if (!pair) {
+    for (const report of stats.values()) {
+      if (report.type === 'candidate-pair' && (report.selected || (report.nominated && report.state === 'succeeded'))) {
+        pair = report;
+        break;
+      }
+    }
+  }
+  if (!pair) return null;
+  const local = stats.get(pair.localCandidateId);
+  const remote = stats.get(pair.remoteCandidateId);
+  return {
+    relay: local?.candidateType === 'relay' || remote?.candidateType === 'relay'
+  };
+}
+
+async function refreshChatCallMediaState() {
+  const peer = chatPeerConnection;
+  if (!peer) return;
+  chatCallMediaState.connectionState = peer.connectionState || chatCallMediaState.connectionState;
+  chatCallMediaState.iceConnectionState = peer.iceConnectionState || chatCallMediaState.iceConnectionState;
+  try {
+    const pair = await selectedChatCandidatePairSummary(peer);
+    if (pair?.relay) chatCallMediaState.relay = true;
+  } catch {}
+  updateChatRemoteMediaState();
+  renderChatCallStatus();
+}
+
+function startChatCallStatsMonitor() {
+  stopChatCallStatsMonitor();
+  chatCallStatsTimer = setInterval(() => {
+    refreshChatCallMediaState().catch(() => {});
+  }, 1500);
+  refreshChatCallMediaState().catch(() => {});
+}
+
+function stopChatCallStatsMonitor() {
+  if (chatCallStatsTimer) clearInterval(chatCallStatsTimer);
+  chatCallStatsTimer = null;
+}
+
 function chatLocalStreamSupports(mode = 'audio') {
   if (!chatLocalStream) return false;
   const hasLiveAudio = chatLocalStream.getAudioTracks().some(track => track.readyState !== 'ended');
@@ -5872,7 +6014,11 @@ function createChatPeer(mode = 'audio') {
   };
   chatPeerConnection.ontrack = event => {
     remoteCallVideo.srcObject = event.streams[0];
+    updateChatRemoteMediaState(event.streams[0]);
   };
+  chatPeerConnection.onconnectionstatechange = () => refreshChatCallMediaState().catch(() => {});
+  chatPeerConnection.oniceconnectionstatechange = () => refreshChatCallMediaState().catch(() => {});
+  startChatCallStatsMonitor();
   return chatPeerConnection;
 }
 
@@ -5919,7 +6065,7 @@ function showChatRtcNotice(mode = 'audio', action = null) {
   pendingChatRtcAction = action;
   if (chatRtcNotice) chatRtcNotice.hidden = false;
   chatCallStatus.hidden = false;
-  chatCallStatus.textContent = '继续前确认 WebRTC 网络提示';
+  setChatCallStatus('继续前确认 WebRTC 网络提示', { mode });
   message.textContent = 'WebRTC 通话可能向通话对方暴露网络地址；仅与可信联系人通话。';
 }
 
@@ -5940,7 +6086,7 @@ function cancelChatRtcNotice() {
   if (peerId) sendChatRealtime('call-reject', { mode, callId, to: peerId, reason: 'network notice declined' });
   chatCallId = '';
   chatCallPeerId = '';
-  chatCallStatus.textContent = '通话已取消';
+  resetChatCallMediaState(mode, '通话已取消');
   chatCallStatus.hidden = false;
   message.textContent = '通话已取消。';
 }
@@ -5972,6 +6118,7 @@ async function startChatCall(mode) {
   }
   chatCallId = `call-${Date.now()}`;
   chatCallPeerId = selectedChatFriendId();
+  resetChatCallMediaState(mode, '连接中');
   const stream = await getChatLocalStream(mode);
   const peer = createChatPeer(mode);
   stream.getTracks().forEach(track => peer.addTrack(track, stream));
@@ -5981,7 +6128,7 @@ async function startChatCall(mode) {
   sendChatRealtime('rtc-offer', { mode, sdp: offer });
   const callLabel = mode === 'video' ? '视频' : '语音';
   chatCallStatus.hidden = false;
-  chatCallStatus.textContent = `${callLabel}通话邀请已发出`;
+  setChatCallStatus(`${callLabel}通话邀请已发出`, { mode });
   renderMessages();
   const effect = applyChatVitalEvent(mode === 'video' ? 'callVideo' : 'callAudio');
   const text = `${callLabel}通话邀请已发出，我会陪你守住这次联系。`;
@@ -5997,7 +6144,7 @@ async function handleChatRealtime(event, payload = {}) {
       const mode = payload.mode || 'audio';
       const callLabel = mode === 'video' ? '视频' : '语音';
       chatCallStatus.hidden = false;
-      chatCallStatus.textContent = `${callLabel}来电，等待确认 WebRTC 网络提示`;
+      setChatCallStatus(`${callLabel}来电，等待确认 WebRTC 网络提示`, { mode });
       showChatRtcNotice(mode, () => handleChatRealtime(event, payload));
       renderMessages();
       return;
@@ -6010,7 +6157,7 @@ async function handleChatRealtime(event, payload = {}) {
     chatCallStage.hidden = false;
     chatCallStage.classList.remove('hidden');
     chatCallStatus.hidden = false;
-    chatCallStatus.textContent = `${callLabel}来电，正在自动接通`;
+    resetChatCallMediaState(mode, `${callLabel}来电，正在自动接通`);
     renderMessages();
     message.textContent = `${callLabel}来电，正在自动接通。`;
     try {
@@ -6023,14 +6170,14 @@ async function handleChatRealtime(event, payload = {}) {
     } catch (error) {
       const status = mode === 'video' ? '无法接通：需要麦克风或摄像头授权' : '无法接通：需要麦克风授权';
       sendChatRealtime('call-reject', { mode, callId, to: payload.from, reason: error.message });
-      chatCallStatus.textContent = status;
+      setChatCallStatus(status, { mode });
       renderMessages();
       message.textContent = `${status}。`;
     }
     return;
   }
   if (event === 'call-answer') {
-    chatCallStatus.textContent = '对方已接听';
+    setChatCallStatus('对方已接听', { mode: payload.mode });
     renderMessages();
   }
   if (event === 'call-reject' || event === 'call-cancel' || event === 'call-end') {
@@ -6043,6 +6190,7 @@ async function handleChatRealtime(event, payload = {}) {
   }
   if (event === 'rtc-offer') {
     const callId = payload.callId || chatCallId;
+    resetChatCallMediaState(payload.mode, '连接中');
     const stream = await getChatLocalStream(payload.mode);
     const peer = createChatPeer(payload.mode);
     stream.getTracks().forEach(track => peer.addTrack(track, stream));
@@ -6050,12 +6198,12 @@ async function handleChatRealtime(event, payload = {}) {
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
     sendChatRealtime('rtc-answer', { mode: payload.mode, sdp: answer, callId, to: payload.from });
-    chatCallStatus.textContent = '通话中';
+    setChatCallStatus('通话中', { mode: payload.mode });
     renderMessages();
   }
   if (event === 'rtc-answer' && chatPeerConnection) {
     await chatPeerConnection.setRemoteDescription(payload.sdp);
-    chatCallStatus.textContent = '通话中';
+    setChatCallStatus('通话中', { mode: payload.mode });
     renderMessages();
   }
   if (event === 'rtc-ice' && chatPeerConnection && payload.candidate) {
@@ -6066,6 +6214,7 @@ async function handleChatRealtime(event, payload = {}) {
 function endChatCall(options = {}) {
   const endedCallId = chatCallId;
   if (options.notify !== false) sendChatRealtime('call-end', { callId: endedCallId, mode: 'audio' });
+  stopChatCallStatsMonitor();
   if (chatPeerConnection) chatPeerConnection.close();
   chatPeerConnection = null;
   if (chatLocalStream) chatLocalStream.getTracks().forEach(track => track.stop());
@@ -6079,8 +6228,7 @@ function endChatCall(options = {}) {
   remoteCallVideo.srcObject = null;
   chatCallStage.hidden = true;
   chatCallStage.classList.add('hidden');
-  chatCallStatus.textContent = options.status || '未通话';
-  chatCallStatus.hidden = chatCallStatus.textContent === '未通话';
+  resetChatCallMediaState('audio', options.status || '未通话');
   renderMessages();
 }
 
@@ -7261,6 +7409,12 @@ voiceRecordButton.addEventListener('keyup', event => {
 chatCallAudio.addEventListener('click', () => requestChatCall('audio').catch(error => { message.textContent = `语音通话失败：${error.message}`; }));
 chatCallVideo.addEventListener('click', () => requestChatCall('video').catch(error => { message.textContent = `视频通话失败：${error.message}`; }));
 chatCallEnd.addEventListener('click', endChatCall);
+chatCallStatus.addEventListener('click', () => copyChatCallAcceptanceSummary().catch(error => { message.textContent = `复制通话状态失败：${error.message}`; }));
+chatCallStatus.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  copyChatCallAcceptanceSummary().catch(error => { message.textContent = `复制通话状态失败：${error.message}`; });
+});
 chatRtcContinue.addEventListener('click', () => continueChatRtcNotice().catch(error => { message.textContent = `通话失败：${error.message}`; }));
 chatRtcCancel.addEventListener('click', cancelChatRtcNotice);
 cloudRegisterButton.addEventListener('click', () => registerCloudChatAccount().catch(error => { message.textContent = `创建 ID 失败：${error.message}`; }));

@@ -2805,7 +2805,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     document.querySelector('#pet')?.dataset.windowMode || 'compact'
   `).catch(() => 'compact');
   const effectiveWindowSize = windowMode === 'client'
-    ? { width: 820, height: 720 }
+    ? { width: 1120, height: 820 }
     : scenario.windowSize;
   if (effectiveWindowSize.width !== scenario.windowSize.width || effectiveWindowSize.height !== scenario.windowSize.height) {
     browserWindow.setSize(effectiveWindowSize.width, effectiveWindowSize.height, false);
@@ -3473,6 +3473,11 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
       && domState.careGuidance.title === `观察状态：${reason}，${impact}；约30秒后再继续。`
     );
   };
+  const abovePetStatsOk = rect => (
+    domState.petStatsDisplay === 'none'
+    || domState.careMenu.statsRect.width === 0
+    || rect.bottom <= domState.careMenu.statsRect.top - 4
+  );
   const careMenuCooldownObservationOk = !scenario.expectCareMenuCooldownObservation || (
     !domState.careMenu.hidden
     && domState.homeCare.expanded === 'true'
@@ -3596,7 +3601,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.needs.energy === 'primary'
     && domState.careFeedback.needs.mood === 'stable'
     && domState.careFeedback.needs.bond === 'stable'
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const careMenuLowMoodOk = !scenario.expectCareMenuLowMood || (
     !domState.careMenu.hidden
@@ -3632,7 +3637,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.bondLabel === '亲密·熟悉'
     && domState.careFeedback.bondStage === 'familiar'
     && domState.careFeedback.needs.mood === 'primary'
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const careMenuLowBondOk = !scenario.expectCareMenuLowBond || (
     !domState.careMenu.hidden
@@ -3672,7 +3677,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.bondLabel === '亲密·试探'
     && domState.careFeedback.bondStage === 'new'
     && domState.careFeedback.needs.bond === 'primary'
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const careMenuFamiliarBondPriorityOk = !scenario.expectCareMenuFamiliarBondPriority || (
     !domState.careMenu.hidden
@@ -3786,7 +3791,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.vitalDeltas.mood.hidden
     && domState.careFeedback.vitalDeltas.energy.hidden
     && domState.careFeedback.vitalDeltas.bond.hidden
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const careMenuInsightOk = !scenario.expectCareMenuInsight || (
     !domState.careMenu.hidden
@@ -3796,7 +3801,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careMenu.insight.lineClamp === '2'
     && domState.careMenu.insight.whiteSpace === 'normal'
     && domState.careMenu.rect.top >= domState.messageRect.bottom + 4
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const compoundRestFollowupOk = !scenario.expectCompoundRestFollowup || (
     domState.careMenu.hidden
@@ -4033,7 +4038,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.homeCare.title.includes('现在适合轻互动')
     && domState.homeCare.title.includes('亲密正在变熟')
     && domState.homeCare.title.includes('预计亲密增加，也会照顾心情')
-    && domState.homeCare.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.homeCare.rect)
   );
   const homeStudyEnergyTradeoffOk = !scenario.expectHomeStudyEnergyTradeoff || (
     domState.surface === 'home'
@@ -4070,7 +4075,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.energyStage === 'ready'
     && domState.careFeedback.bondLabel === '亲密·亲近'
     && domState.careFeedback.bondStage === 'close'
-    && domState.homeCare.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.homeCare.rect)
   );
   const homeWorkEnergyDropPreviewOk = !scenario.expectHomeWorkEnergyDropPreview || (
     domState.surface === 'home'
@@ -4112,7 +4117,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careGuidance.previewTitle === '亲密增加 · 精力降到低电（心+2 精-10 亲+4 · 精降低电，亲到亲近）'
     && domState.careGuidance.previewAria === '预计变化：亲密增加 · 精力降到低电（心+2 精-10 亲+4 · 精降低电，亲到亲近）'
     && domState.careGuidance.title === '执行推荐：打工。盯当前任务，预计亲密增加 · 精力降到低电（心+2 精-10 亲+4 · 精降低电，亲到亲近）。'
-    && domState.homeCare.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.homeCare.rect)
   );
   const careGuidanceShortcutOk = !scenario.expectCareGuidanceShortcut || (
     domState.careGuidance.before?.display === 'grid'
@@ -4929,7 +4934,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careMenu.buttons[0]?.effectCount === 2
     && domState.careFeedback.focus === 'bond'
     && domState.careFeedback.focusSource === 'inspect'
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const vitalInsightRepeatOk = !scenario.expectVitalInsightRepeat || (
     domState.surface === 'home'
@@ -5119,7 +5124,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
   const offlineRestFeedbackOk = !scenario.expectOfflineRestFeedback || (
     domState.surface === 'home'
     && domState.vibe === 'steady'
-    && domState.petStatsDisplay === 'grid'
+    && domState.petStatsDisplay === 'none'
     && domState.petStateSummary === '离开后恢复了精力'
     && domState.petCareCue === '先接回节奏'
     && domState.careFeedback.reason.includes('休息后精力回来了')
@@ -5191,7 +5196,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.settings.intensity === 'normal'
     && domState.vibe === 'steady'
     && domState.contextDisplay === 'none'
-    && domState.message === '我看着设置面板，提醒节奏调顺就继续任务。'
+    && domState.message === '设置客户端已打开，保存后立即生效。'
     && domState.petStateSummary === '正在看着设置节奏'
     && domState.petCareCue === '调提醒节奏'
     && domState.careFeedback.reason.includes('打开设置面板')
@@ -5219,10 +5224,10 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.onboarding.text.includes('屏幕检查')
     && domState.onboarding.text.includes('社交监督')
     && domState.onboarding.text.includes('WebRTC')
-    && domState.onboarding.text.includes('会采集什么')
-    && domState.onboarding.text.includes('不会采集什么')
-    && domState.onboarding.text.includes('数据保存在哪里')
-    && domState.onboarding.text.includes('是否会外发')
+    && domState.onboarding.text.includes('采集')
+    && domState.onboarding.text.includes('不做')
+    && domState.onboarding.text.includes('保存')
+    && domState.onboarding.text.includes('外发')
     && domState.onboarding.overflowingNodes.length === 0
     && domState.message === '先选一个模式，基础模式三分钟内就能开始用。'
   );
@@ -5381,7 +5386,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
   const bondMilestoneOk = !scenario.expectBondMilestone || (
     domState.surface === 'home'
     && domState.vibe === 'steady'
-    && domState.petStatsDisplay === 'grid'
+    && domState.petStatsDisplay === 'none'
     && domState.careFeedback.milestone === 'true'
     && domState.careFeedback.recent === '关系更亲近了'
     && !domState.careFeedback.recentHidden

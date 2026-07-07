@@ -1,6 +1,6 @@
 # Focus Pet 开发闭环方案
 
-更新时间：2026-07-06
+更新时间：2026-07-07
 
 ## 目标
 
@@ -19,10 +19,10 @@ v1.1 只闭合三条主线：
 - Phase 1 已闭合：桌面端默认使用 `screenCheckTransport: 'auto'` 和线上 Focus Pet Cloud `/api/screen-check`，新用户不需要本机 StepFun key；屏幕检查默认只回到本机，不启动本地聊天服务，不保存截图到聊天媒体。只有用户把“好友可见性”显式改成“好友记录屏幕分析摘要”时，才会发布屏幕摘要。
 - Phase 2 已接入完整桌面 Pet：聊天面板默认使用 Cloud 账号，支持创建 ID、显示/复制 6 位数字好友码、添加好友码、Cloud 文字/图片消息、持久化本机账号、Cloud WebSocket 信令、语音和视频按钮。Cloud 模式会显示“正在连接 / 已连接 / 已断开 / 连接异常”，通话点击时会主动连接 Cloud socket。
 - Phase 2 可靠性补齐：无效好友码会返回明确错误，不再显示成添加成功；Cloud 用户上线、下线和添加好友后会向本人和好友广播最新 state，用于刷新在线状态。
-- Phase 3 已部署：Modal `focus-pet-cloud` 已挂载 StepFun Secret 和独立 TURN Secret；`/healthz` 返回 `screenCheck.enabled=true`、`rtc.configValid=true`、`rtc.hasTurn=true`。
+- Phase 3 自动门禁已部署：Modal `focus-pet-cloud` 已挂载 StepFun Secret 和独立 TURN Secret；`/healthz` 返回 `screenCheck.enabled=true`、`rtc.configValid=true`、`rtc.hasTurn=true`。新增 `npm run cloud:webrtc:verify` 会注册两名临时 Cloud 用户、复用生产 WSS 信令、强制 `iceTransportPolicy: 'relay'`，并用合成音频/视频轨道验证浏览器 WebRTC 媒体能走 TURN relay。不同网络下两台真实电脑语音/视频仍是发布前人工实机验收项，不能只用本机脚本替代；两端点击通话状态行复制摘要后，可用 `npm run call:acceptance` 合并生成本地 Markdown 验收记录。
 - Phase 4 已按产品决策跳过 Apple Developer ID 签名和 notarization，完成 ad-hoc signed DMG/ZIP/manifest GitHub Release 路径；公开文档继续说明 macOS 首次打开可能出现 Gatekeeper 提示。
-- v1.1.2 已准备发布到 GitHub Release，资产包含 `Focus-Pet-1.1.2-mac-arm64.dmg`、`Focus-Pet-1.1.2-mac-arm64.zip` 和 SHA-256 manifest；这版补齐宠物气泡提示、应用内直接下载更新包、Cloud 文字/图片消息、6 位数字好友码和更大的设置客户端面板。
-- 线上验证已跑通：`cloud-health`、`cloud:turn:verify -- --skip-api-ice`、`cloud:smoke -- --skip-screen-check`、完整 `cloud:smoke` 均通过。
+- v1.1.3 已发布到 GitHub Release：`https://github.com/RSXLX/focus-pet/releases/tag/v1.1.3`，资产包含 `Focus-Pet-1.1.3-mac-arm64.dmg`、`Focus-Pet-1.1.3-mac-arm64.zip` 和 SHA-256 manifest；这版收敛更大的设置客户端面板、Cloud relay-only WebRTC 验证、Cloud 文字/图片 smoke 增强和通话人工验收记录工具。
+- 线上验证已跑通并在 2026-07-07 14:54 CST 复验通过：`cloud-health`、完整 `npm run cloud:turn:verify`、完整 `npm run cloud:webrtc:verify`、完整 `npm run cloud:smoke` 均通过；`cloud:smoke` 覆盖注册、无效好友码拒绝、互加好友、在线/离线刷新、Cloud 文字/图片消息、WebSocket 通话邀请和 `/api/screen-check`。`cloud:webrtc:verify` 已覆盖 audio/video 两种模式、远端轨道到达和 relay candidate pair；仍不能替代两台真实电脑跨网人工验收。
 
 ## 暂缓范围
 
@@ -171,6 +171,8 @@ npm run cloud:deploy:modal
 ```bash
 node scripts/release-preflight.js --check cloud-health
 npm run cloud:turn:verify
+npm run cloud:webrtc:verify
+npm run call:acceptance -- --side-a path/to/alice-summary.txt --side-b path/to/bob-summary.txt --mode video
 ```
 
 5. 修改 release preflight：
@@ -184,6 +186,10 @@ npm run cloud:turn:verify
 - 不同网络下两台电脑视频可通。
 - `/healthz` 返回 `rtc.hasTurn=true`。
 - `npm run cloud:turn:verify` 能确认桌面端可拿到 TURN ICE 配置，并在 TCP TURN 配置存在时验证本机 TCP 可达。
+- `npm run cloud:webrtc:verify` 能强制 relay-only 建立浏览器 WebRTC，并收到合成音频/视频远端轨道。
+- 两台真实电脑人工验收时，桌面端通话状态行能显示远端音频/视频已到达；跨复杂网络时优先确认显示 `relay`。
+- 两台真实电脑人工验收时，可点击通话状态行复制无敏感信息的验收摘要，便于保留双方证据。
+- 两台真实电脑复制出来的验收摘要可通过 `npm run call:acceptance` 生成本地记录；记录不得包含好友码、token、SDP、ICE candidate、TURN URL、IP 或设备 ID。
 
 ## Phase 4：macOS 发布闭环
 
@@ -202,7 +208,8 @@ npm test
 npm run check
 npm run verify:pet-render
 node scripts/release-preflight.js --check cloud-health
-npm run cloud:turn:verify -- --skip-api-ice
+npm run cloud:turn:verify
+npm run cloud:webrtc:verify
 npm run cloud:smoke
 npm run release:preflight -- --run fast
 npm run release:mac
@@ -239,6 +246,7 @@ npm run release:mac
 - `v1.1.0`：完整桌面 Pet 内置 Cloud ID / 好友码 / 语音 / 视频。
 - `v1.1.1`：Cloud 好友状态刷新、无效好友码错误反馈、线上 smoke 增强、TURN 配置验证和 ad-hoc signed GitHub Release。
 - `v1.1.2`：宠物气泡和系统通知提示更新，用户确认后直接下载并打开最新安装包；Cloud 好友码改为 6 位数字，桌面端支持 Cloud 文字/图片消息，设置类页面使用更大的客户端面板。
+- `v1.1.3`：Cloud relay-only WebRTC 自动门禁、Cloud 文字/图片 smoke 持久化验证、通话状态复制验收摘要和 `call:acceptance` 本地验收记录。
 - `v1.2.0` 或后续版本：在需要“免 Gatekeeper 提示”分发时，再做 Apple Developer ID 签名和 notarization。
 
 ## 最小开发顺序

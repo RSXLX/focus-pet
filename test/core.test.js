@@ -51,6 +51,11 @@ const {
   summarizeIceUrls: summarizeCloudTurnIceUrls
 } = require('../scripts/verify-cloud-turn');
 const {
+  buildCallAcceptanceRecord,
+  parseCallAcceptanceSummary,
+  validateCallAcceptancePair
+} = require('../scripts/record-call-acceptance');
+const {
   parseWindowsFrontmost,
   platformFocusPermission,
   platformSettingsProfile,
@@ -3786,11 +3791,18 @@ test('Focus Pet Cloud provides a Modal deployment target for zero-setup users', 
   const modalApp = fs.readFileSync(path.join(PROJECT_ROOT, 'modal_app.py'), 'utf8');
   const docs = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'focus-pet-cloud.md'), 'utf8');
   const smokeScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'test-cloud-live.js'), 'utf8');
+  const relayScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'test-cloud-webrtc-relay.js'), 'utf8');
+  const acceptanceScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'record-call-acceptance.js'), 'utf8');
+  const releaseChecklist = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'release-checklist.md'), 'utf8');
 
   assert.equal(packageJson.scripts['cloud:deploy:modal'], 'modal deploy modal_app.py');
   assert.equal(packageJson.scripts['cloud:smoke'], 'node scripts/test-cloud-live.js');
+  assert.equal(packageJson.scripts['cloud:webrtc:verify'], 'node scripts/test-cloud-webrtc-relay.js');
+  assert.equal(packageJson.scripts['call:acceptance'], 'node scripts/record-call-acceptance.js');
   assert.match(packageJson.scripts.check, /python3 -m py_compile modal_app\.py/);
   assert.match(packageJson.scripts.check, /node --check scripts\/test-cloud-live\.js/);
+  assert.match(packageJson.scripts.check, /node --check scripts\/test-cloud-webrtc-relay\.js/);
+  assert.match(packageJson.scripts.check, /node --check scripts\/record-call-acceptance\.js/);
   assert.match(modalApp, /modal\.App\("focus-pet-cloud"\)/);
   assert.match(modalApp, /modal\.Image\.from_registry\("node:22-slim", add_python="3\.12"\)/);
   assert.match(modalApp, /modal\.Volume\.from_name\("focus-pet-cloud-data", create_if_missing=True\)/);
@@ -3801,15 +3813,74 @@ test('Focus Pet Cloud provides a Modal deployment target for zero-setup users', 
   assert.match(modalApp, /npm", "run", "cloud:serve"/);
   assert.match(smokeScript, /registerCloudUser/);
   assert.match(smokeScript, /addCloudFriend/);
+  assert.match(smokeScript, /sendCloudMessage/);
+  assert.match(smokeScript, /getCloudMe/);
   assert.match(smokeScript, /new WebSocket/);
   assert.match(smokeScript, /\/api\/screen-check/);
   assert.match(smokeScript, /invalidFriendCodeRejected/);
   assert.match(smokeScript, /stateHasFriendOnline/);
+  assert.match(smokeScript, /stateHasMessage/);
+  assert.match(smokeScript, /waitForSocketEvent\(bobSocket, 'message'/);
+  assert.match(smokeScript, /waitForSocketEvent\(aliceSocket, 'message'/);
+  assert.match(smokeScript, /messages:\s*\{\s*text: textMessage,\s*image: imageMessage\s*\}/);
   assert.match(smokeScript, /onlineRefresh/);
   assert.match(smokeScript, /offlineRefresh/);
   assert.match(smokeScript, /waitForSocketEvent\(bobSocket, 'call-invite'/);
+  assert.match(relayScript, /new BrowserWindow/);
+  assert.match(relayScript, /RTCPeerConnection/);
+  assert.match(relayScript, /iceTransportPolicy: input\.relayOnly \? 'relay' : 'all'/);
+  assert.match(relayScript, /createSyntheticStream\(mode\)/);
+  assert.match(relayScript, /selected WebRTC candidate pair did not use relay candidates/);
+  assert.match(acceptanceScript, /parseCallAcceptanceSummary/);
+  assert.match(acceptanceScript, /validateCallAcceptancePair/);
+  assert.match(acceptanceScript, /friend-code/);
+  assert.match(acceptanceScript, /turn-url/);
   assert.match(docs, /modal deploy modal_app\.py/);
+  assert.match(docs, /cloud:webrtc:verify[\s\S]*iceTransportPolicy: 'relay'/);
+  assert.match(docs, /call:acceptance[\s\S]*Markdown 记录/);
+  assert.match(docs, /不保存好友码、token、SDP、ICE candidate、TURN URL、IP 或设备 ID/);
+  assert.match(releaseChecklist, /npm run cloud:webrtc:verify/);
+  assert.match(releaseChecklist, /npm run call:acceptance/);
+  assert.match(releaseChecklist, /两台真实电脑、不同网络下的语音\/视频人工验收/);
   assert.match(docs, /GitHub Pages[\s\S]*不能承载 Node\/WebSocket 后端/);
+});
+
+test('call acceptance records validate real two-computer call summaries without storing sensitive data', () => {
+  const sideA = [
+    'Focus Pet 通话验收状态',
+    '时间：2026-07-07T06:00:00.000Z',
+    '模式：video',
+    '状态：通话中 · 已连接 · 远端音视频 · relay',
+    '远端媒体：audio,video',
+    '连接：connected',
+    'Relay：yes',
+    '来源：cloud'
+  ].join('\n');
+  const sideB = [
+    'Focus Pet 通话验收状态',
+    '时间：2026-07-07T06:00:01.000Z',
+    '模式：video',
+    '状态：通话中 · 已连接 · 远端音视频 · relay',
+    '远端媒体：video,audio',
+    '连接：completed',
+    'Relay：yes',
+    '来源：cloud'
+  ].join('\n');
+  const parsed = parseCallAcceptanceSummary(sideA);
+  assert.equal(parsed.headerOk, true);
+  assert.deepEqual(parsed.remoteKinds, ['audio', 'video']);
+  assert.deepEqual(parsed.sensitiveIssues, []);
+  const result = validateCallAcceptancePair({ sideA, sideB }, { mode: 'video', requireRelay: true });
+  assert.equal(result.ok, true);
+  const record = buildCallAcceptanceRecord(result, '2026-07-07T06:01:00.000Z');
+  assert.match(record, /验收结果：通过/);
+  assert.match(record, /要求 relay：是/);
+  assert.doesNotMatch(record, /secret|turn:example|friendCode|authToken|deviceId|iceServers|wss?:\/\//i);
+
+  const leaked = `${sideA}\nSDP: secret\ncandidate: secret\nturn:example.invalid`;
+  const failed = validateCallAcceptancePair({ sideA: leaked, sideB }, { mode: 'video', requireRelay: true });
+  assert.equal(failed.ok, false);
+  assert.ok(failed.failures.some(item => item.startsWith('sideA:sensitive-')));
 });
 
 test('remote social client supports invite onboarding, messaging, and WebRTC calls', () => {
@@ -3902,6 +3973,7 @@ test('desktop chat UI keeps a minimal toolbar with hidden media and WebRTC suppo
   assert.match(indexHtml, /id="chatRtcCancel"/);
   assert.match(indexHtml, /id="localCallVideo"/);
   assert.match(indexHtml, /id="remoteCallVideo"/);
+  assert.match(indexHtml, /id="chatCallStatus"[^>]*role="button"[^>]*tabindex="0"/);
   assert.doesNotMatch(styles, /\.chat-compose\s*\{[^}]*display:\s*none/);
   assert.match(styles, /\.chat-tools\s*\{[\s\S]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
   assert.doesNotMatch(styles, /#chatCallAudio,\s*#chatCallVideo\s*\{[\s\S]*display:\s*none/);
@@ -3910,6 +3982,9 @@ test('desktop chat UI keeps a minimal toolbar with hidden media and WebRTC suppo
   assert.match(styles, /\.chat-file-card/);
   assert.match(styles, /\.chat-call-stage/);
   assert.match(styles, /\.chat-rtc-notice/);
+  assert.match(styles, /\.chat-call-status[\s\S]*text-overflow: ellipsis/);
+  assert.match(styles, /\.chat-call-status[\s\S]*cursor: copy/);
+  assert.doesNotMatch(styles, /\.chat-call-status\s*\{[\s\S]*clip-path: inset\(50%\)/);
   assert.match(styles, /\.peer-activity/);
   assert.match(styles, /\.peer-activity-log/);
   assert.match(renderer, /window\.focusPet\.markRead/);
@@ -3929,6 +4004,20 @@ test('desktop chat UI keeps a minimal toolbar with hidden media and WebRTC suppo
   assert.match(renderer, /data\.event === 'activity'/);
   assert.match(renderer, /new RTCPeerConnection/);
   assert.match(renderer, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(renderer, /function selectedChatCandidatePairSummary\(peer\)/);
+  assert.match(renderer, /candidateType === 'relay'/);
+  assert.match(renderer, /function updateChatRemoteMediaState\(stream\)/);
+  assert.match(renderer, /function renderChatCallStatus\(\)/);
+  assert.match(renderer, /function chatCallAcceptanceSummary\(\)/);
+  assert.match(renderer, /function copyChatCallAcceptanceSummary\(\)/);
+  assert.match(renderer, /chatCallStatus\.addEventListener\('click'/);
+  assert.match(renderer, /window\.focusPet\.copyText\(summary\)/);
+  const summaryStart = renderer.indexOf('function chatCallAcceptanceSummary()');
+  const summaryEnd = renderer.indexOf('async function copyChatCallAcceptanceSummary()', summaryStart);
+  const acceptanceSummarySource = renderer.slice(summaryStart, summaryEnd);
+  assert.ok(summaryStart >= 0 && summaryEnd > summaryStart);
+  assert.doesNotMatch(acceptanceSummarySource, /candidate\.candidate|friendCode|authToken|sdp|iceServers|websocketUrl|deviceId/);
+  assert.match(renderer, /远端音视频/);
   assert.match(renderer, /RTC_NETWORK_NOTICE_KEY/);
   assert.match(renderer, /function chatRtcNoticeAccepted/);
   assert.match(renderer, /function showChatRtcNotice/);
@@ -4013,7 +4102,7 @@ test('settings page presents screenshot analysis as screen check instead of moni
   const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
   const llmSelfCheck = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'llm-self-check.js'), 'utf8');
 
-  assert.match(indexHtml, /屏幕检查和 LLM 请求集中在这里/);
+  assert.match(indexHtml, /AI 检查和复盘/);
   assert.match(indexHtml, /<span>屏幕检查<\/span>/);
   assert.match(indexHtml, /<span>检查间隔 秒<\/span>/);
   assert.match(indexHtml, /<option value="stepfun">StepFun 视觉检查<\/option>/);
@@ -4043,12 +4132,12 @@ test('settings page is layered into basic focus AI social and advanced groups', 
   assert.match(indexHtml, /id="settingsGroupBasic"[\s\S]*id="settingLaunchAtLogin"[\s\S]*id="settingCooldown"[\s\S]*id="settingIdle"[\s\S]*id="settingIntensity"/);
   assert.match(indexHtml, /id="settingsGroupFocus"[\s\S]*id="settingFocusKeywords"[\s\S]*id="settingStudyKeywords"[\s\S]*id="settingGameKeywords"[\s\S]*id="settingDistractionKeywords"[\s\S]*id="settingGameApps"[\s\S]*id="settingWorkApps"/);
   assert.match(indexHtml, /id="settingsGroupAi"[\s\S]*data-setting-risk="ai"[\s\S]*id="settingScreenMonitorEnabled"[\s\S]*id="settingScreenMonitorEndpoint"[\s\S]*id="settingReviewLlmEnabled"[\s\S]*id="testLlmConnectivity"[\s\S]*id="testScreenMonitor"/);
-  assert.match(indexHtml, /id="settingsGroupSocial"[\s\S]*data-setting-risk="social"[\s\S]*id="settingSocialActivityShareLevel"[\s\S]*id="settingMediaMb"[\s\S]*id="settingVoiceShortcut"[\s\S]*好友码[\s\S]*通话配置/);
+  assert.match(indexHtml, /id="settingsGroupSocial"[\s\S]*data-setting-risk="social"[\s\S]*id="settingSocialActivityShareLevel"[\s\S]*id="settingMediaMb"[\s\S]*id="settingVoiceShortcut"[\s\S]*好友码[\s\S]*通话/);
   assert.match(indexHtml, /value="presence"[\s\S]*仅记录在线状态/);
   assert.match(indexHtml, /value="status"[\s\S]*好友记录工作\/学习\/休息状态/);
   assert.match(indexHtml, /value="summary"[\s\S]*好友记录状态摘要/);
   assert.match(indexHtml, /value="screen-summary"[\s\S]*好友记录屏幕分析摘要/);
-  assert.match(indexHtml, /对方不会回读你的截图分析结果/);
+  assert.match(indexHtml, /截图分析不发给好友/);
   assert.match(indexHtml, /id="settingsGroupAdvanced"[\s\S]*data-setting-risk="advanced"[\s\S]*id="settingUpdateUrl"[\s\S]*id="settingActivityRetentionDays"[\s\S]*id="openDataFromSettings"[\s\S]*id="runDiagnosticsFromSettings"[\s\S]*id="permissionGuide"/);
 
   assert.match(renderer, /const settingGroupButtons = Array\.from\(document\.querySelectorAll\('\[data-settings-tab\]'\)\)/);
@@ -4100,7 +4189,7 @@ test('onboarding guide offers three modes and keeps AI/social capabilities opt-i
 
   assert.match(indexHtml, /id="onboardingToggle"/);
   assert.match(indexHtml, /id="onboardingPanel" class="onboarding-panel hidden"/);
-  assert.match(indexHtml, /data-onboarding-mode="basic" data-onboarding-duration="under-3-minutes"[\s\S]*基础模式[\s\S]*任务 \+ 宠物 \+ 前台 App 判断[\s\S]*会采集什么[\s\S]*不会采集什么[\s\S]*数据保存在哪里[\s\S]*是否会外发[\s\S]*id="completeBasicOnboarding"/);
+  assert.match(indexHtml, /data-onboarding-mode="basic" data-onboarding-duration="under-3-minutes"[\s\S]*基础模式[\s\S]*任务 \+ 宠物 \+ 前台 App 判断[\s\S]*采集[\s\S]*不做[\s\S]*保存[\s\S]*外发[\s\S]*id="completeBasicOnboarding"/);
   assert.match(indexHtml, /data-onboarding-mode="enhanced"[\s\S]*增强模式[\s\S]*工作\/学习\/娱乐关键词[\s\S]*复盘[\s\S]*id="openEnhancedOnboarding"/);
   assert.match(indexHtml, /data-onboarding-mode="advanced" data-onboarding-default="off"[\s\S]*高级模式[\s\S]*屏幕检查[\s\S]*社交监督[\s\S]*WebRTC[\s\S]*id="openAdvancedOnboarding"/);
 
@@ -7179,19 +7268,24 @@ test('desktop UI keeps the pet float compact and opens settings as a larger clie
   const styles = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'styles.css'), 'utf8');
   const verifyRender = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'verify-pet-render.js'), 'utf8');
 
-  assert.match(main, /client: \{ width: 820, height: 720 \}/);
+  assert.match(main, /client: \{ width: 1120, height: 820 \}/);
   assert.match(main, /mode === 'client' \? WINDOW_SIZES\.client : WINDOW_SIZES\.expanded/);
   assert.match(preload, /setExpanded: \(expanded, mode\) => ipcRenderer\.invoke\('app:set-expanded', expanded, mode\)/);
   assert.match(renderer, /const CLIENT_SURFACES = new Set\(\['settings', 'onboarding', 'review'\]\)/);
   assert.match(renderer, /await setExpanded\(true, 'client'\)/);
   assert.match(renderer, /async function showChat[\s\S]*await setExpanded\(true, 'panel'\)/);
   assert.match(renderer, /async function showTasks[\s\S]*await setExpanded\(true, 'panel'\)/);
-  assert.match(styles, /#reviewToggle,\s*#onboardingToggle,\s*#openData\s*\{\s*display: none;/);
+  assert.match(styles, /#reviewToggle,\s*#onboardingToggle,\s*#openData\s*\{\s*display: none !important;/);
   assert.match(styles, /\.pet\[data-window-mode="client"\] \.avatar/);
   assert.match(styles, /\.pet\.expanded\[data-window-mode="client"\] \.panel/);
-  assert.match(styles, /\.pet\[data-window-mode="client"\] \.settings-tab[\s\S]*font-size: 14px/);
+  assert.match(styles, /\.pet\[data-window-mode="client"\] \.settings-tab[\s\S]*font-size: 17px/);
+  assert.match(styles, /\.pet\[data-window-mode="client"\] \.settings-group[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /\.pet\[data-window-mode="client"\] input,[\s\S]*font-size: 17px/);
+  assert.match(styles, /\.pet\[data-window-mode="panel"\] #context,[\s\S]*\.pet\[data-window-mode="panel"\] \.pet-stats[\s\S]*display: none/);
+  assert.match(styles, /\.pet\.expanded:not\(\[data-window-mode="client"\]\) #context,[\s\S]*\.pet\.expanded:not\(\[data-window-mode="client"\]\) \.pet-stats[\s\S]*display: none/);
   assert.match(verifyRender, /const clientWindowMode = domState\.windowMode === 'client'/);
   assert.match(verifyRender, /clientPanelModeOk/);
+  assert.match(verifyRender, /const abovePetStatsOk = rect =>/);
   assert.match(verifyRender, /avatarWidth: clientWindowMode \|\| domState\.avatarRect\.width > 100/);
 });
 

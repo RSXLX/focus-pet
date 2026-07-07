@@ -5,6 +5,8 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const {
   addCloudFriend,
+  getCloudMe,
+  sendCloudMessage,
   registerCloudUser
 } = require('../src/cloud-client');
 const { DEFAULT_FOCUS_PET_CLOUD_BASE_URL } = require('../src/llm-provider');
@@ -139,6 +141,10 @@ function stateHasFriendOnline(state = {}, friendId = '', online = true) {
   return (state.friends || []).some(friend => friend.id === friendId && Boolean(friend.online) === online);
 }
 
+function stateHasMessage(state = {}, messageId = '') {
+  return (state.messages || []).some(message => message.id === messageId);
+}
+
 async function runScreenCheck(baseUrl, timeoutMs) {
   const result = await withTimeout(requestJson(`${baseUrl}/api/screen-check`, {
     method: 'POST',
@@ -205,6 +211,8 @@ async function runCloudSmoke(options = {}) {
   const bobSocket = new WebSocket(pairedBob.websocketUrl);
   let onlineRefresh = false;
   let offlineRefresh = false;
+  let textMessage = false;
+  let imageMessage = false;
   try {
     const aliceOnlinePromise = waitForSocketState(
       aliceSocket,
@@ -229,6 +237,44 @@ async function runCloudSmoke(options = {}) {
       bobOnlinePromise
     ]);
     onlineRefresh = true;
+
+    const textEventPromise = waitForSocketEvent(bobSocket, 'message', settings.timeoutMs, 'bob');
+    const sentText = await sendCloudMessage({
+      to: bob.self.id,
+      type: 'text',
+      text: `Smoke text ${suffix}`
+    }, { accountPath: alicePath, fetchImpl: fetch });
+    const textEvent = await textEventPromise;
+    if (textEvent.id !== sentText.id || textEvent.from !== alice.self.id || textEvent.to !== bob.self.id || textEvent.type !== 'text') {
+      throw new Error('cloud text message realtime payload did not match expected users');
+    }
+    textMessage = true;
+
+    const imageEventPromise = waitForSocketEvent(aliceSocket, 'message', settings.timeoutMs, 'alice');
+    const sentImage = await sendCloudMessage({
+      to: alice.self.id,
+      type: 'image',
+      media: {
+        url: ONE_PIXEL_PNG,
+        name: 'smoke.png',
+        mimeType: 'image/png',
+        size: ONE_PIXEL_PNG.length
+      }
+    }, { accountPath: bobPath, fetchImpl: fetch });
+    const imageEvent = await imageEventPromise;
+    if (imageEvent.id !== sentImage.id || imageEvent.from !== bob.self.id || imageEvent.to !== alice.self.id || imageEvent.type !== 'image') {
+      throw new Error('cloud image message realtime payload did not match expected users');
+    }
+    imageMessage = true;
+
+    const [aliceAfterMessages, bobAfterMessages] = await Promise.all([
+      getCloudMe({ accountPath: alicePath, fetchImpl: fetch }),
+      getCloudMe({ accountPath: bobPath, fetchImpl: fetch })
+    ]);
+    for (const messageId of [sentText.id, sentImage.id]) {
+      if (!stateHasMessage(aliceAfterMessages, messageId)) throw new Error(`Alice cloud state did not include smoke message ${messageId}`);
+      if (!stateHasMessage(bobAfterMessages, messageId)) throw new Error(`Bob cloud state did not include smoke message ${messageId}`);
+    }
 
     const callId = `smoke-call-${suffix}`;
     const invitePromise = waitForSocketEvent(bobSocket, 'call-invite', settings.timeoutMs, 'bob');
@@ -270,6 +316,10 @@ async function runCloudSmoke(options = {}) {
     },
     invalidFriendCodeRejected,
     friendPairing: true,
+    messages: {
+      text: textMessage,
+      image: imageMessage
+    },
     onlineRefresh,
     offlineRefresh,
     websocketSignaling: true,

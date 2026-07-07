@@ -20,7 +20,9 @@ npm run release:preflight -- --run fast
 ```bash
 node scripts/release-preflight.js --check cloud-health
 npm run cloud:turn:verify
+npm run cloud:webrtc:verify
 npm run cloud:smoke
+npm run call:acceptance -- --side-a path/to/alice-summary.txt --side-b path/to/bob-summary.txt --mode video
 ```
 
 该检查要求：
@@ -30,10 +32,17 @@ npm run cloud:smoke
 - `rtc.configValid=true`。
 - `rtc.hasTurn=true`。
 - `cloud:turn:verify` 能确认客户端实际拿到 TURN ICE 配置；若配置包含 `turns:` 或 `turn:?transport=tcp`，本机 TCP 探测至少有一个地址可达。
-- `cloud:smoke` 注册两个临时生产 Cloud 用户，互加好友，连接 WSS，转发一次通话邀请，并调用 `/api/screen-check`。
+- `cloud:webrtc:verify` 能用生产 WSS 信令和 relay-only WebRTC 建立合成音频/视频媒体连接，并收到远端轨道。
+- `cloud:smoke` 注册两个临时生产 Cloud 用户，互加好友，连接 WSS，发送并持久化 Cloud 文字/图片消息，转发一次通话邀请，并调用 `/api/screen-check`。
+- `call:acceptance` 能把两台真实电脑各自复制的通话状态摘要合并成本地 Markdown 验收记录；默认要求两端都是 Cloud、已连接、收到远端媒体、无敏感字段且包含 relay 证据。
 
 如果 `rtc.configValid=false`，先修正 TURN Secret JSON；如果 `rtc.hasTurn=false`，先配置 TURN，再重新部署 Modal。
-`cloud:turn:verify` 和 `cloud:smoke` 会真实写入生产 Cloud 用户数据，所以不放进自动 preflight 组，发布前人工运行。
+`cloud:turn:verify`、`cloud:webrtc:verify` 和 `cloud:smoke` 会真实写入生产 Cloud 用户数据，所以不放进自动 preflight 组，发布前人工运行。
+
+`cloud:webrtc:verify` 是本机 relay 媒体门禁，不替代两台真实电脑、不同网络下的语音/视频人工验收。
+两台真实电脑人工验收时，双方桌面端通话状态行应显示已收到远端音频/视频；复杂网络验收优先确认状态行出现 `relay`，该状态只来自浏览器 candidate 类型，不展示 IP、TURN URL、用户名或凭据。
+状态行可点击复制本机通话验收摘要，摘要只包含时间、模式、状态、远端媒体、连接状态、relay 标记和来源，不包含好友 ID、IP、SDP、ICE、TURN URL、用户名或凭据。
+两台电脑分别复制摘要后，可在发布机执行 `npm run call:acceptance -- --side-a alice.txt --side-b bob.txt --mode video` 生成 `output/call-acceptance/` 下的本地验收记录；如果只是同网预检，可临时加 `--no-require-relay`，正式复杂网络验收不要关闭 relay 要求。
 
 Modal 用来部署 Focus Pet Cloud 和保存/下发 TURN ICE 配置；不要把 Modal Web Endpoint 当作生产 TURN relay。真正的 TURN relay 需要可稳定开放 TURN TCP/UDP 和 relay 端口的托管 TURN 或 coturn 服务。
 当前线上部署使用 `focus-pet-cloud-turn` Secret 保存 `FOCUS_PET_CLOUD_RTC_ICE_SERVERS`，与 `focus-pet-cloud-stepfun` 分离，避免更新 TURN 时覆盖 StepFun key。
