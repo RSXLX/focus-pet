@@ -10793,3 +10793,17 @@
 - 上下文：目标测试本身已通过，但上一条错误日志仍是“未解决”，release preflight 的 error-log gate 按设计阻断。
 - 可能原因：记录失败后没有追加对应的已解决收尾条目。
 - 解决状态：已解决（已收窄敏感断言，只检查真实泄露样例和值；本条用于闭合 error-log gate）
+
+## [2026-07-07 15:01:20 CST]
+- 问题描述：创建 GitHub Release v1.1.3 失败，GitHub API 返回 `Release.target_commitish is invalid`。
+- 发生位置：`gh release create v1.1.3 --target 25765ef ...`
+- 上下文：分支 `feat/focus-pet-cloud-backend` 已推送成功，但 release 创建命令使用了短 SHA 作为 target。
+- 可能原因：GitHub Release API 不接受该短 SHA 作为 `target_commitish`，需要使用完整 SHA 或已推送分支名。
+- 解决状态：未解决
+
+## [2026-07-07 15:02:10 CST]
+- 问题描述：创建 GitHub Release v1.1.3 失败，GitHub API 返回 `Release.target_commitish is invalid`。
+- 发生位置：`gh release create v1.1.3 --target 25765ef ...`
+- 上下文：已改用完整 commit SHA `25765ef2991445ded8aa008b27441a4210fd9b23` 重新执行 release 创建，并成功上传 DMG、ZIP 和 manifest。
+- 可能原因：GitHub Release API 不接受短 SHA 作为 `target_commitish`。
+- 解决状态：已解决
