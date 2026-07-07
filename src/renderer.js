@@ -86,6 +86,7 @@ const chatInput = document.querySelector('#chatInput');
 const cloudChatAccount = document.querySelector('#cloudChatAccount');
 const cloudChatStatus = document.querySelector('#cloudChatStatus');
 const cloudFriendCode = document.querySelector('#cloudFriendCode');
+const cloudCopyCodeButton = document.querySelector('#cloudCopyCodeButton');
 const cloudDisplayName = document.querySelector('#cloudDisplayName');
 const cloudRegisterButton = document.querySelector('#cloudRegisterButton');
 const cloudFriendCodeInput = document.querySelector('#cloudFriendCodeInput');
@@ -128,6 +129,7 @@ const surfaceButtons = {
   onboarding: document.querySelector('#onboardingToggle'),
   settings: document.querySelector('#settingsToggle')
 };
+const CLIENT_SURFACES = new Set(['settings', 'onboarding', 'review']);
 const petStats = {
   panel: document.querySelector('#petStats'),
   summary: document.querySelector('#petStateSummary'),
@@ -678,6 +680,7 @@ const PET_GIF_FALLBACKS = [
 ];
 
 let expanded = false;
+let windowMode = 'compact';
 let hoverDepth = 0;
 let chatSocket;
 let chatPingTimer;
@@ -760,6 +763,8 @@ let appSettings = {
   reviewLlmModel: 'step-3.7-flash'
 };
 let updateCheckTimer = null;
+let pendingUpdatePrompt = null;
+let lastUpdateNudgeVersion = '';
 let screenMonitorTimer = null;
 let lastScreenMonitorAt = 0;
 let currentPetAnimation = '';
@@ -1109,6 +1114,18 @@ async function handleNudgeAction() {
   const target = nudge?.target || (['distracted', 'game', 'unknown', 'permission'].includes(lastStatus.status) ? 'tasks' : 'home');
   const prompt = nudge?.text || '';
   clearNudge();
+  if (target === 'update') {
+    if (pendingUpdatePrompt?.url) {
+      message.textContent = `正在下载 Focus Pet ${pendingUpdatePrompt.latestVersion || ''} 安装包...`;
+      const result = await window.focusPet.openUpdateDownload(pendingUpdatePrompt);
+      message.textContent = result?.downloaded
+        ? `已下载并打开 ${result.fileName || '最新安装包'}。`
+        : '已打开下载页。';
+      return;
+    }
+    await showSettings();
+    return;
+  }
   if (target === 'chat') {
     await showChat();
     return;
@@ -1122,7 +1139,7 @@ async function handleNudgeAction() {
     return;
   }
   if (target === 'care') {
-    await setExpanded(true);
+    await setExpanded(true, 'panel');
     setActiveSurface('home');
     panel.classList.add('hidden');
     chatPanel.classList.add('hidden');
@@ -1134,10 +1151,16 @@ async function handleNudgeAction() {
   await setExpanded(true);
 }
 
-async function setExpanded(nextExpanded) {
+function windowModeForSurface(surface = activeSurface) {
+  return CLIENT_SURFACES.has(surface) ? 'client' : 'panel';
+}
+
+async function setExpanded(nextExpanded, mode = windowModeForSurface()) {
   expanded = nextExpanded;
+  windowMode = expanded ? mode : 'compact';
   pet.classList.toggle('compact', !expanded);
   pet.classList.toggle('expanded', expanded);
+  pet.dataset.windowMode = windowMode;
   if (!expanded) {
     panel.classList.add('hidden');
     chatPanel.classList.add('hidden');
@@ -1146,7 +1169,7 @@ async function setExpanded(nextExpanded) {
     setActiveSurface('home');
   }
   updateHomeActions();
-  await window.focusPet.setExpanded(expanded);
+  await window.focusPet.setExpanded(expanded, windowMode);
 }
 
 function enterInteractiveZone() {
@@ -5217,7 +5240,7 @@ async function refreshStatus() {
   lastStatus = status;
   setMood(status.status);
   syncVitalsWithFocusStatus(status);
-  if (nudge?.source !== 'chat' && (!expanded || activeSurface === 'home')) message.textContent = status.message;
+  if (!nudge && (!expanded || activeSurface === 'home')) message.textContent = status.message;
   context.textContent = status.ok
     ? `${status.app}${status.title ? ` · ${status.title}` : ''}｜${status.reason}`
     : status.reason;
@@ -5253,7 +5276,7 @@ function maybeAutoPopup(status) {
 
 async function showTasks() {
   clearNudge();
-  await setExpanded(true);
+  await setExpanded(true, 'panel');
   setActiveSurface('tasks');
   chatPanel.classList.add('hidden');
   panel.classList.remove('hidden');
@@ -5274,7 +5297,7 @@ async function showTasks() {
 
 async function showReview() {
   clearNudge();
-  await setExpanded(true);
+  await setExpanded(true, 'client');
   setActiveSurface('review');
   chatPanel.classList.add('hidden');
   const review = await window.focusPet.getReview();
@@ -5299,7 +5322,7 @@ async function showReview() {
 
 async function showOnboarding() {
   clearNudge();
-  await setExpanded(true);
+  await setExpanded(true, 'client');
   setActiveSurface('onboarding');
   chatPanel.classList.add('hidden');
   panel.classList.remove('hidden');
@@ -5561,7 +5584,7 @@ async function saveSettings() {
 
 async function showSettings() {
   clearNudge();
-  await setExpanded(true);
+  await setExpanded(true, 'client');
   setActiveSurface('settings');
   chatPanel.classList.add('hidden');
   panel.classList.remove('hidden');
@@ -5591,6 +5614,32 @@ function cloudChatSignedIn(state = chatState) {
 
 function chatSocketOpen() {
   return chatSocket?.readyState === WebSocket.OPEN;
+}
+
+function waitForChatSocketOpen(timeoutMs = 7000) {
+  if (chatSocketOpen()) return Promise.resolve(true);
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      if (chatSocketOpen()) {
+        clearInterval(timer);
+        resolve(true);
+        return;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        clearInterval(timer);
+        reject(new Error('Cloud 连接超时，请刷新后重试'));
+      }
+    }, 120);
+  });
+}
+
+async function ensureCloudChatSocketOpen() {
+  if (!isCloudChatState()) return true;
+  if (chatSocketOpen()) return true;
+  chatSocketEnabled = true;
+  connectChatSocket();
+  return waitForChatSocketOpen();
 }
 
 function cloudChatConnectionLabel() {
@@ -5626,6 +5675,7 @@ function mergeCloudRealtimeState(payload = {}) {
     signedIn: Boolean(chatState.authToken && self?.id),
     self,
     friends: Array.isArray(payload.friends) ? payload.friends.map(normalizeCloudFriend).filter(friend => friend.id) : chatState.friends,
+    messages: Array.isArray(payload.messages) ? payload.messages : chatState.messages,
     iceServers: Array.isArray(payload.iceServers) ? payload.iceServers : chatState.iceServers
   };
 }
@@ -5641,6 +5691,7 @@ function renderCloudChatAccount() {
     ? `${chatState.self?.name || '我'} · ${cloudChatConnectionLabel()}`
     : (chatState.error ? `Cloud 需要重新连接：${chatState.error}` : '创建 ID 后显示好友码');
   cloudFriendCode.textContent = friendCode ? `好友码 ${friendCode}` : '好友码 -';
+  cloudCopyCodeButton.disabled = !friendCode;
   cloudRegisterButton.disabled = signedIn;
   cloudDisplayName.disabled = signedIn;
   cloudFriendCodeInput.disabled = !signedIn;
@@ -5652,15 +5703,17 @@ function syncCloudChatControls() {
   const isCloud = isCloudChatState();
   const signedIn = cloudChatSignedIn();
   const hasFriend = Boolean(selectedChatFriendId());
-  const socketReady = !isCloud || chatSocketOpen();
-  chatInput.disabled = isCloud;
-  chatInput.placeholder = isCloud ? 'Cloud 模式先支持语音/视频' : '发消息';
-  imageButton.disabled = isCloud;
+  const canCloudSend = signedIn && hasFriend;
+  chatInput.disabled = isCloud ? !canCloudSend : false;
+  chatInput.placeholder = isCloud
+    ? (signedIn ? (hasFriend ? '发文字给 Cloud 好友' : '先添加 6 位好友码') : '先创建我的 ID')
+    : '发消息';
+  imageButton.disabled = isCloud ? !canCloudSend : false;
   fileButton.disabled = isCloud;
   petGifButton.disabled = isCloud;
   voiceModeButton.disabled = isCloud;
-  chatCallAudio.disabled = isCloud ? !signedIn || !hasFriend || !socketReady : false;
-  chatCallVideo.disabled = isCloud ? !signedIn || !hasFriend || !socketReady : false;
+  chatCallAudio.disabled = isCloud ? !signedIn || !hasFriend : false;
+  chatCallVideo.disabled = isCloud ? !signedIn || !hasFriend : false;
   revokeSessionButton.hidden = isCloud;
 }
 
@@ -5897,14 +5950,13 @@ async function requestChatCall(mode) {
     message.textContent = '先创建我的 ID，再发起通话。';
     return;
   }
-  if (isCloudChatState() && !chatSocketOpen()) {
-    message.textContent = 'Cloud 正在连接，稍后再发起通话。';
-    connectChatSocket();
+  if (!selectedChatFriendId()) {
+    message.textContent = isCloudChatState() ? '先添加 6 位好友码，再发起通话。' : '先添加好友，再发起通话。';
     return;
   }
-  if (!selectedChatFriendId()) {
-    message.textContent = isCloudChatState() ? '先添加好友码，再发起通话。' : '先添加好友，再发起通话。';
-    return;
+  if (isCloudChatState() && !chatSocketOpen()) {
+    message.textContent = 'Cloud 正在连接，连上后会发起通话。';
+    await ensureCloudChatSocketOpen();
   }
   if (!chatRtcNoticeAccepted()) {
     showChatRtcNotice(mode, () => startChatCall(mode));
@@ -5915,7 +5967,7 @@ async function requestChatCall(mode) {
 
 async function startChatCall(mode) {
   if (!selectedChatFriendId()) {
-    message.textContent = isCloudChatState() ? '先添加好友码，再发起通话。' : '先添加好友，再发起通话。';
+    message.textContent = isCloudChatState() ? '先添加 6 位好友码，再发起通话。' : '先添加好友，再发起通话。';
     return;
   }
   chatCallId = `call-${Date.now()}`;
@@ -6129,7 +6181,7 @@ function renderMessages() {
   if (callNotice) appendChatSystemRow(callNotice);
   if (!visibleMessages.length && !callNotice) {
     const emptyText = isCloudChatState()
-      ? (cloudChatSignedIn() ? '添加好友码后，可以发起语音或视频。' : '先创建我的 ID，生成好友码。')
+      ? (cloudChatSignedIn() ? '添加 6 位好友码后，可以发文字、图片或发起语音/视频。' : '先创建我的 ID，生成 6 位好友码。')
       : '还没有消息，先发语音或视频给搭子。';
     appendChatSystemRow(emptyText, 'chat-empty');
   }
@@ -6137,11 +6189,12 @@ function renderMessages() {
 }
 
 function messageStatusLabel(status) {
-  return { queued: '待发送', sent: '已发送', delivered: '已送达', read: '已读', received: '已收到' }[status] || '已发送';
+  return { queued: '待发送', sent: '已发送', delivered: '已送达', read: '已读', received: '已收到', failed: '发送失败' }[status] || '已发送';
 }
 
 function mediaUrl(media) {
   if (!media?.url) return '';
+  if (/^(data|blob):/i.test(media.url)) return media.url;
   const token = chatState.authToken || '';
   try {
     const url = new URL(media.url, `http://127.0.0.1:${chatState.port || 47321}`);
@@ -6361,7 +6414,7 @@ function friendName(id) {
 
 async function showChat({ auto = false, prompt = '' } = {}) {
   clearNudge();
-  await setExpanded(true);
+  await setExpanded(true, 'panel');
   setActiveSurface('chat');
   panel.classList.add('hidden');
   chatPanel.classList.remove('hidden');
@@ -6408,9 +6461,10 @@ async function registerCloudChatAccount() {
 }
 
 async function addCloudChatFriend() {
-  const friendCode = cloudFriendCodeInput.value.trim();
+  const friendCode = cloudFriendCodeInput.value.replace(/\D/g, '').slice(0, 6);
+  cloudFriendCodeInput.value = friendCode;
   if (!friendCode) {
-    message.textContent = '先输入好友码。';
+    message.textContent = '先输入 6 位好友码。';
     return;
   }
   chatState = await window.focusPet.addCloudFriend(friendCode);
@@ -6421,14 +6475,20 @@ async function addCloudChatFriend() {
   renderCloudChatAccount();
   syncCloudChatControls();
   connectChatSocket();
-  message.textContent = '好友已添加，可以发起语音或视频。';
+  message.textContent = '好友已添加，可以发文字、图片或发起语音/视频。';
+}
+
+async function copyCloudFriendCode() {
+  const code = chatState.self?.friendCode || '';
+  if (!code) {
+    message.textContent = '先创建我的 ID，才有好友码。';
+    return;
+  }
+  await window.focusPet.copyText(code);
+  message.textContent = `已复制好友码 ${code}。`;
 }
 
 async function sendTextMessage(textOverride) {
-  if (isCloudChatState()) {
-    message.textContent = 'Cloud 好友当前用于语音和视频，暂不发送文字消息。';
-    return;
-  }
   const text = (textOverride || chatInput.value).trim();
   if (!text) return;
   chatInput.value = '';
@@ -6437,7 +6497,33 @@ async function sendTextMessage(textOverride) {
 
 async function sendMessage(partial) {
   if (isCloudChatState()) {
-    message.textContent = 'Cloud 好友当前用于语音和视频，暂不发送文字或文件。';
+    if (!cloudChatSignedIn()) {
+      message.textContent = '先创建我的 ID，再发送消息。';
+      return;
+    }
+    const to = selectedChatFriendId();
+    if (!to) {
+      message.textContent = '先添加 6 位好友码，再发送消息。';
+      return;
+    }
+    const outgoing = {
+      clientId: `cloud-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      from: chatState.self.id,
+      to,
+      createdAt: new Date().toISOString(),
+      deliveryStatus: 'queued',
+      ...partial
+    };
+    syncChatMessage(outgoing);
+    try {
+      const savedMessage = await window.focusPet.sendCloudMessage(outgoing);
+      syncChatMessage(savedMessage || { ...outgoing, deliveryStatus: 'sent' });
+      applyChatVitalEvent(outgoing.type === 'text' ? 'sendText' : 'sendMedia');
+      message.textContent = outgoing.type === 'text' ? '文字已发送。' : '图片已发送。';
+    } catch (error) {
+      syncChatMessage({ ...outgoing, deliveryStatus: 'failed' });
+      message.textContent = `发送失败：${error.message}`;
+    }
     return;
   }
   if (!chatSocketEnabled) await ensureChatConnected();
@@ -6464,9 +6550,38 @@ function readFileAsBase64(file) {
   });
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 async function sendFile(file, type) {
   if (isCloudChatState()) {
-    message.textContent = 'Cloud 好友当前用于语音和视频，暂不发送文件。';
+    const resolvedType = attachmentTypeForFile(file, type);
+    if (resolvedType !== 'image') {
+      message.textContent = 'Cloud 模式当前先支持文字和图片。';
+      return;
+    }
+    const maxImageBytes = 5 * 1024 * 1024;
+    if (file.size > maxImageBytes) {
+      message.textContent = 'Cloud 图片最多 5MB。';
+      return;
+    }
+    await sendMessage({
+      type: 'image',
+      text: file.name,
+      media: {
+        id: `cloud_media_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        name: file.name,
+        mimeType: file.type || 'image/png',
+        size: file.size,
+        url: await readFileAsDataUrl(file)
+      }
+    });
     return;
   }
   if (file.size > (appSettings.maxMediaMb || chatState.settings?.maxMediaMb || 25) * 1024 * 1024) {
@@ -6799,10 +6914,32 @@ async function checkUpdates(options = {}) {
       updateResult.textContent = result.reason || '没有可用更新源。';
       return;
     }
+    if (!result.available) {
+      if (nudge?.source === 'update') clearNudge('update');
+      pendingUpdatePrompt = null;
+    }
     updateResult.textContent = result.available
       ? `发现 ${result.latestVersion}：${result.notes || '可下载新版本'}`
       : `当前已是最新版本 ${result.currentVersion}`;
-    if (result.available && result.url && options.manual) await window.focusPet.openUpdateDownload(result);
+    if (result.available && result.url) {
+      pendingUpdatePrompt = result;
+      if (!options.manual && result.latestVersion !== lastUpdateNudgeVersion && nudge?.source !== 'chat') {
+        lastUpdateNudgeVersion = result.latestVersion;
+        showNudge({
+          source: 'update',
+          target: 'update',
+          label: '新',
+          text: `Focus Pet ${result.latestVersion} 已发布，点我直接下载更新。`
+        });
+      }
+    }
+    if (result.available && result.url && options.manual) {
+      updateResult.textContent = `正在下载 Focus Pet ${result.latestVersion} 安装包...`;
+      const download = await window.focusPet.openUpdateDownload(result);
+      updateResult.textContent = download?.downloaded
+        ? `已下载并打开 ${download.fileName || '最新安装包'}`
+        : '已打开下载页';
+    }
   } catch (error) {
     updateResult.textContent = `检查失败：${error.message}`;
   }
@@ -7127,8 +7264,10 @@ chatCallEnd.addEventListener('click', endChatCall);
 chatRtcContinue.addEventListener('click', () => continueChatRtcNotice().catch(error => { message.textContent = `通话失败：${error.message}`; }));
 chatRtcCancel.addEventListener('click', cancelChatRtcNotice);
 cloudRegisterButton.addEventListener('click', () => registerCloudChatAccount().catch(error => { message.textContent = `创建 ID 失败：${error.message}`; }));
+cloudCopyCodeButton.addEventListener('click', () => copyCloudFriendCode().catch(error => { message.textContent = `复制失败：${error.message}`; }));
 cloudAddFriendButton.addEventListener('click', () => addCloudChatFriend().catch(error => { message.textContent = `添加好友失败：${error.message}`; }));
 cloudRefreshButton.addEventListener('click', () => refreshCloudChat().catch(error => { message.textContent = `Cloud 刷新失败：${error.message}`; }));
+cloudFriendCodeInput.addEventListener('input', () => { cloudFriendCodeInput.value = cloudFriendCodeInput.value.replace(/\D/g, '').slice(0, 6); });
 cloudFriendCodeInput.addEventListener('keydown', event => { if (event.key === 'Enter') addCloudChatFriend().catch(error => { message.textContent = `添加好友失败：${error.message}`; }); });
 cloudDisplayName.addEventListener('keydown', event => { if (event.key === 'Enter') registerCloudChatAccount().catch(error => { message.textContent = `创建 ID 失败：${error.message}`; }); });
 revokeSessionButton.addEventListener('click', () => revokeSelectedPeerSession().catch(error => { message.textContent = `撤销会话失败：${error.message}`; }));

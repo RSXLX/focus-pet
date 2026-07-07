@@ -310,11 +310,12 @@
         <div class="cloud-chat-identity">
           <span id="cloudChatStatus">Cloud 未连接</span>
           <b id="cloudFriendCode">好友码 -</b>
+          <button id="cloudCopyCodeButton" type="button">复制</button>
         </div>
         <div class="cloud-chat-actions">
           <input id="cloudDisplayName" maxlength="40" placeholder="昵称" />
           <button id="cloudRegisterButton" type="button">创建 ID</button>
-          <input id="cloudFriendCodeInput" maxlength="20" placeholder="好友码" />
+          <input id="cloudFriendCodeInput" maxlength="6" inputmode="numeric" pattern="[0-9]*" placeholder="6 位好友码" />
           <button id="cloudAddFriendButton" type="button">添加</button>
           <button id="cloudRefreshButton" type="button">刷新</button>
         </div>

@@ -1,13 +1,14 @@
 # Focus Pet Cloud
 
-Focus Pet Cloud 是 Focus Pet 的公网后端方案，用于让下载用户拥有自己的稳定 ID，并支持两个人之间的语音和视频连接。
+Focus Pet Cloud 是 Focus Pet 的公网后端方案，用于让下载用户拥有自己的稳定 ID，并支持两个人之间的文字、图片、语音和视频连接。
 
 ## 核心职责
 
-- 用户注册：生成稳定 `userId`、公开 `friendCode` 和设备绑定 auth token。
-- 好友配对：通过对方 `friendCode` 建立双向好友关系。
+- 用户注册：生成稳定 `userId`、公开 6 位数字 `friendCode` 和设备绑定 auth token。
+- 好友配对：通过对方 6 位数字 `friendCode` 建立双向好友关系。
 - 在线刷新：用户上线、下线或添加好友后，Cloud 会向本人和好友广播最新 state。
 - 错误反馈：无效好友码会返回明确错误，桌面端不会把失败显示成添加成功。
+- Cloud 消息：桌面端可发送文字和图片消息；图片当前以内联 data URL 存储，并限制大小，后续需要大文件时再接对象存储。
 - WebSocket 信令：转发 `call-invite`、`rtc-offer`、`rtc-answer`、`rtc-ice` 等 WebRTC 信令。
 - WebRTC 通话：语音和视频媒体由 WebRTC 在客户端之间传输，后端不保存音视频流。
 - TURN 配置：复杂 NAT、公司网络、手机流量或跨运营商场景需要 TURN，提高语音/视频接通率。
@@ -97,7 +98,7 @@ REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:remote-
   "user": {
     "id": "user_xxx",
     "displayName": "Alice",
-    "friendCode": "FP-ABCD-1234"
+    "friendCode": "123456"
   },
   "authToken": "device-bound-token",
   "deviceId": "local-random-device-id",
@@ -107,7 +108,7 @@ REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:remote-
 
 ### `GET /api/me`
 
-使用 `Authorization: Bearer <authToken>` 和 `x-focus-pet-device-id` 获取当前用户和好友列表。
+使用 `Authorization: Bearer <authToken>` 和 `x-focus-pet-device-id` 获取当前用户、好友列表和最近 Cloud 消息。
 
 ### `POST /api/friends`
 
@@ -115,7 +116,37 @@ REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:remote-
 
 ```json
 {
-  "friendCode": "FP-WXYZ-5678"
+  "friendCode": "654321"
+}
+```
+
+### `POST /api/messages`
+
+使用认证 token 向已配对好友发送文字或图片消息。
+
+文字消息：
+
+```json
+{
+  "to": "user_friend",
+  "type": "text",
+  "text": "今晚 8 点一起复盘"
+}
+```
+
+图片消息：
+
+```json
+{
+  "to": "user_friend",
+  "type": "image",
+  "text": "截图",
+  "media": {
+    "name": "screen.png",
+    "mimeType": "image/png",
+    "size": 1024,
+    "url": "data:image/png;base64,..."
+  }
 }
 ```
 
@@ -283,12 +314,13 @@ GitHub Pages 不能承载 Node/WebSocket 后端，也不能作为 Focus Pet Clou
 1. 默认公开下载由 GitHub Release 提供完整桌宠 DMG/ZIP，构建命令为 `npm run release:mac`。
 2. Modal 提供统一 Focus Pet Cloud 后端，并通过 Secret 持有 StepFun key。
 3. 桌面端内置默认 Cloud 检查 URL，首次启动自动生成本机 `screenCheckDeviceId`。
-4. 桌面端调用 `POST /api/users` 注册，保存 `userId`、`friendCode` 和设备绑定 `authToken` 到本机。
-5. 用户只需要把 `friendCode` 发给对方，双方即可建立好友关系。
-6. 发起语音/视频时，桌面端通过 Cloud WebSocket 交换 WebRTC offer、answer 和 ICE candidate。
-7. 开启屏幕检查时，桌面端调用 Cloud `/api/screen-check`，不需要用户配置或持有 StepFun key。
-8. 如果只需要账号、好友和通话能力，可单独构建轻量聊天/通话客户端：`REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:remote-client`。
+4. 桌面端调用 `POST /api/users` 注册，保存 `userId`、6 位数字 `friendCode` 和设备绑定 `authToken` 到本机。
+5. 用户只需要复制 `friendCode` 发给对方，双方即可建立好友关系。
+6. 双方可以通过 `POST /api/messages` 发送 Cloud 文字和图片消息。
+7. 发起语音/视频时，桌面端通过 Cloud WebSocket 交换 WebRTC offer、answer 和 ICE candidate。
+8. 开启屏幕检查时，桌面端调用 Cloud `/api/screen-check`，不需要用户配置或持有 StepFun key。
+9. 如果只需要账号、好友和通话能力，可单独构建轻量聊天/通话客户端：`REMOTE_CLIENT_URL="https://cloud.example.com/client" npm run release:mac:remote-client`。
 
 生产 Cloud 的非破坏性健康检查使用 `node scripts/release-preflight.js --check cloud-health`。发布前人工 smoke test 使用 `npm run cloud:smoke`；它会注册两个临时生产 Cloud 用户、互加好友、连接 WSS、转发一次通话邀请，并调用 `/api/screen-check`，因此不会自动加入 `release:preflight -- --run full`。
 
-当前仓库已经具备 Cloud 后端、Modal 部署入口、公开 `/client` 聊天/通话客户端入口、完整桌宠内的 Cloud 账号/好友入口、稳定 ID、好友码、认证 WebSocket 信令、WebRTC TURN 配置接口、后端屏幕检查代理，以及完整桌宠 macOS DMG/ZIP release 脚本。聊天/通话客户端 release 脚本仅作为可选发布面保留。
+当前仓库已经具备 Cloud 后端、Modal 部署入口、公开 `/client` 聊天/通话客户端入口、完整桌宠内的 Cloud 账号/好友入口、稳定 ID、6 位数字好友码、文字/图片消息、认证 WebSocket 信令、WebRTC TURN 配置接口、后端屏幕检查代理，以及完整桌宠 macOS DMG/ZIP release 脚本。聊天/通话客户端 release 脚本仅作为可选发布面保留。

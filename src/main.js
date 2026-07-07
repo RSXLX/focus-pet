@@ -1,6 +1,8 @@
-const { app, BrowserWindow, Notification, desktopCapturer, ipcMain, screen, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, Notification, clipboard, desktopCapturer, ipcMain, screen, session, shell, systemPreferences } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { Readable } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 const focus = require('./focus');
 const { writeRuntimeLog, sanitizeLogText } = require('./runtime-logger');
 const { appendJsonlWithRetention } = require('./jsonl-retention');
@@ -54,7 +56,8 @@ const PET_GIF_ASSETS = [
 
 const WINDOW_SIZES = {
   compact: { width: 220, height: 270 },
-  expanded: { width: 540, height: 520 }
+  expanded: { width: 540, height: 520 },
+  client: { width: 820, height: 720 }
 };
 
 function getChatService() {
@@ -391,11 +394,54 @@ function safeExternalUrl(value) {
   }
 }
 
+function safeUpdateAssetName(update = {}, url = '') {
+  const name = String(update.assetName || '').trim()
+    || decodeURIComponent(path.basename(new URL(url).pathname || ''));
+  const clean = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (/\.(dmg|zip|pkg)$/i.test(clean)) return clean;
+  const version = String(update.latestVersion || 'latest').replace(/[^A-Za-z0-9._-]+/g, '-');
+  return `Focus-Pet-${version}.dmg`;
+}
+
+function uniqueDownloadPath(dir, fileName) {
+  const parsed = path.parse(fileName);
+  let candidate = path.join(dir, fileName);
+  for (let index = 1; fs.existsSync(candidate); index += 1) {
+    candidate = path.join(dir, `${parsed.name}-${index}${parsed.ext}`);
+  }
+  return candidate;
+}
+
+async function downloadUpdateAsset(update = {}) {
+  const url = safeExternalUrl(update.downloadUrl);
+  if (!url) return null;
+  const downloadsDir = app.getPath('downloads') || focus.DATA_DIR;
+  fs.mkdirSync(downloadsDir, { recursive: true });
+  const fileName = safeUpdateAssetName(update, url);
+  const targetPath = uniqueDownloadPath(downloadsDir, fileName);
+  const response = await fetch(url, {
+    cache: 'no-store',
+    headers: { 'user-agent': `FocusPetUpdater/${packageJson.version}` }
+  });
+  if (!response?.ok) throw new Error(`安装包下载失败：${response?.status || 'unknown'}`);
+  if (response.body) {
+    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(targetPath, { flags: 'wx' }));
+  } else {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    fs.writeFileSync(targetPath, buffer, { flag: 'wx' });
+  }
+  const openError = await shell.openPath(targetPath);
+  if (openError) throw new Error(openError);
+  return { downloaded: true, filePath: targetPath, fileName, url };
+}
+
 async function openUpdateDownload(update = {}) {
-  const url = safeExternalUrl(update.url || update.pageUrl || update.downloadUrl || DEFAULT_UPDATE_PAGE_URL);
+  const downloaded = await downloadUpdateAsset(update);
+  if (downloaded) return { ok: true, ...downloaded };
+  const url = safeExternalUrl(update.pageUrl || update.url || DEFAULT_UPDATE_PAGE_URL);
   if (!url) return false;
   await shell.openExternal(url);
-  return true;
+  return { ok: true, downloaded: false, url };
 }
 
 function showUpdateNotification(result = {}) {
@@ -406,7 +452,7 @@ function showUpdateNotification(result = {}) {
 
   const notification = new Notification({
     title: 'Focus Pet 有新版本',
-    body: `${result.latestVersion} 已发布，点击打开下载页。`,
+    body: `${result.latestVersion} 已发布，点击直接下载最新安装包。`,
     icon: APP_ICON_PNG
   });
   notification.on('click', () => {
@@ -644,9 +690,15 @@ app.whenReady().then(() => {
     return true;
   });
   ipcMain.handle('app:open-data-dir', () => shell.openPath(focus.DATA_DIR));
-  ipcMain.handle('app:set-expanded', (_event, expanded) => {
+  ipcMain.handle('app:copy-text', (_event, text) => {
+    clipboard.writeText(String(text || ''));
+    return true;
+  });
+  ipcMain.handle('app:set-expanded', (_event, expanded, mode = 'panel') => {
     if (!mainWindow) return;
-    const { width, height } = expanded ? WINDOW_SIZES.expanded : WINDOW_SIZES.compact;
+    const { width, height } = expanded
+      ? (mode === 'client' ? WINDOW_SIZES.client : WINDOW_SIZES.expanded)
+      : WINDOW_SIZES.compact;
     const bounds = mainWindow.getBounds();
     mainWindow.setBounds(clampWindowBounds(bounds.x, bounds.y, width, height), true);
   });
@@ -665,6 +717,7 @@ app.whenReady().then(() => {
   ipcMain.handle('cloud:get-state', () => getCloudClient().getCloudMe({ fetchImpl: fetch, settings: focus.getSettings() }));
   ipcMain.handle('cloud:register', (_event, input) => getCloudClient().registerCloudUser(input, { fetchImpl: fetch, settings: focus.getSettings() }));
   ipcMain.handle('cloud:add-friend', (_event, friendCode) => getCloudClient().addCloudFriend(friendCode, { fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:send-message', (_event, message) => getCloudClient().sendCloudMessage(message, { fetchImpl: fetch, settings: focus.getSettings() }));
   ipcMain.handle('cloud:refresh', () => getCloudClient().getCloudMe({ fetchImpl: fetch, settings: focus.getSettings() }));
   ipcMain.handle('cloud:clear-account', () => getCloudClient().accountToChatState(getCloudClient().clearCloudAccount({ settings: focus.getSettings() }), null, { settings: focus.getSettings() }));
   ipcMain.handle('chat:get-state', () => {

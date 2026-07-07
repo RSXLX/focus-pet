@@ -10674,3 +10674,17 @@
 - 上下文：发布 v1.1.0 后做远端校验，命令返回 Unknown JSON field；随后用 `gh release list --limit 5` 确认 v1.1.0 为 Latest，并改用支持的 `tagName`、`name`、`publishedAt`、`url`、`targetCommitish`、`isDraft`、`isPrerelease` 和 `assets` 字段完成资产校验。
 - 可能原因：当前 gh CLI 2.88.1 的 `release view` JSON 字段集合不包含 `isLatest`。
 - 解决状态：已解决
+
+## [2026-07-07 11:47:32 CST]
+- 问题描述：新增大客户端设置/引导/复盘模式后，`npm run verify:pet-render` 一度失败，失败场景集中在 `settings-open-feedback`、`onboarding-guide` 和复盘相关场景。
+- 发生位置：`src/styles.css` / `scripts/verify-pet-render.js` / `test/core.test.js`
+- 上下文：按用户要求将设置、引导、复盘改为更大的客户端面板，并让悬浮窗只保留核心功能和主文字；初次渲染 QA 仍按旧小悬浮面板规则检查 context 小字和头像布局。
+- 可能原因：客户端模式 CSS 后置规则重新显示了 `#context`，同时新增单测漏读 `verifyRender` 变量。
+- 解决状态：已解决（客户端模式隐藏 `#context`，补齐单测变量，复测 `node --test ...` 和 `npm run verify:pet-render` 通过）
+
+## [2026-07-07 11:59:00 CST]
+- 问题描述：Modal 部署 v1.1.2 后，`cloud:turn:verify -- --skip-api-ice` 和手动 `/healthz` 请求一度超时；验证脚本超时后还会留下未退出的 Node fetch 进程。
+- 发生位置：`npm run cloud:turn:verify -- --skip-api-ice` / Modal `focus-pet-cloud` / `scripts/verify-cloud-turn.js`
+- 上下文：完成 v1.1.2 Cloud 文本/图片消息和 6 位好友码部署后，首次 `cloud-health` 成功，但后续 health 请求进入 Modal CPU worker 调度等待；日志显示旧容器仍有长 WebSocket 连接，新容器等待调度。
+- 可能原因：Modal 单容器部署在滚动切换期间被旧长连接和 worker 调度等待影响；验证脚本只用 Promise race 标记超时，没有 abort 底层 fetch。
+- 解决状态：已解决（执行 `modal app rollover focus-pet-cloud --strategy recreate` 后 health/TURN 通过；`verify-cloud-turn.js` 改为 20 秒默认超时并用 AbortController 取消 fetch；线上 `/api/messages` 文字和图片 smoke 通过）

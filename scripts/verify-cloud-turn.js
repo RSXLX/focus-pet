@@ -3,7 +3,7 @@ const net = require('node:net');
 const { createHash, randomUUID } = require('node:crypto');
 const { DEFAULT_FOCUS_PET_CLOUD_BASE_URL } = require('../src/llm-provider');
 
-const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 20_000;
 
 function parseArgs(argv = process.argv.slice(2), env = process.env) {
   const options = {
@@ -32,18 +32,22 @@ function parseArgs(argv = process.argv.slice(2), env = process.env) {
   return options;
 }
 
-function withTimeout(promise, timeoutMs, label) {
-  let timer;
-  return Promise.race([
-    promise.finally(() => clearTimeout(timer)),
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-    })
-  ]);
-}
-
 async function requestJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(url, { ...fetchOptions, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const pathname = new URL(url).pathname || url;
+      throw new Error(`fetch ${pathname} timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(body.error || body.reason || response.statusText || `HTTP ${response.status}`);
@@ -134,8 +138,9 @@ function testTcpConnection(host, port, timeoutMs) {
 
 async function registerProbeUser(baseUrl, timeoutMs) {
   const deviceId = `turn-verify-${randomUUID()}`;
-  const registered = await withTimeout(requestJson(`${baseUrl}/api/users`, {
+  const registered = await requestJson(`${baseUrl}/api/users`, {
     method: 'POST',
+    timeoutMs,
     headers: {
       'content-type': 'application/json',
       'x-focus-pet-device-id': deviceId
@@ -144,15 +149,15 @@ async function registerProbeUser(baseUrl, timeoutMs) {
       displayName: `TURN Verify ${randomUUID().slice(0, 8)}`,
       deviceId
     })
-  }), timeoutMs, 'register probe user');
+  });
   const authToken = registered.authToken || '';
   if (!authToken) throw new Error('cloud registration did not return authToken');
   const authHeaders = {
     authorization: `Bearer ${authToken}`,
     'x-focus-pet-device-id': deviceId
   };
-  const me = await withTimeout(requestJson(`${baseUrl}/api/me`, { headers: authHeaders }), timeoutMs, 'fetch /api/me');
-  const ice = await withTimeout(requestJson(`${baseUrl}/api/ice`, { headers: authHeaders }), timeoutMs, 'fetch /api/ice');
+  const me = await requestJson(`${baseUrl}/api/me`, { headers: authHeaders, timeoutMs });
+  const ice = await requestJson(`${baseUrl}/api/ice`, { headers: authHeaders, timeoutMs });
   return {
     userCreated: true,
     userId: registered.user?.id || me.self?.id || '',
@@ -163,7 +168,7 @@ async function registerProbeUser(baseUrl, timeoutMs) {
 async function verifyCloudTurn(options = {}) {
   const settings = { ...parseArgs([], {}), ...options };
   const baseUrl = String(settings.baseUrl || DEFAULT_FOCUS_PET_CLOUD_BASE_URL).replace(/\/+$/, '');
-  const health = await withTimeout(requestJson(`${baseUrl}/healthz`), settings.timeoutMs, 'fetch /healthz');
+  const health = await requestJson(`${baseUrl}/healthz`, { timeoutMs: settings.timeoutMs });
   const apiIce = settings.skipApiIce
     ? { skipped: true, userCreated: false, iceServers: [] }
     : await registerProbeUser(baseUrl, settings.timeoutMs);

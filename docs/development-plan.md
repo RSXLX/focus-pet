@@ -17,10 +17,11 @@ v1.1 只闭合三条主线：
 更新时间：2026-07-07
 
 - Phase 1 已闭合：桌面端默认使用 `screenCheckTransport: 'auto'` 和线上 Focus Pet Cloud `/api/screen-check`，新用户不需要本机 StepFun key；屏幕检查默认只回到本机，不启动本地聊天服务，不保存截图到聊天媒体。只有用户把“好友可见性”显式改成“好友记录屏幕分析摘要”时，才会发布屏幕摘要。
-- Phase 2 已接入完整桌面 Pet：聊天面板默认使用 Cloud 账号，支持创建 ID、显示好友码、添加好友码、持久化本机账号、Cloud WebSocket 信令、语音和视频按钮。Cloud 模式会显示“正在连接 / 已连接 / 已断开 / 连接异常”，通话按钮只在账号、好友和 socket 都可用时启用。
+- Phase 2 已接入完整桌面 Pet：聊天面板默认使用 Cloud 账号，支持创建 ID、显示/复制 6 位数字好友码、添加好友码、Cloud 文字/图片消息、持久化本机账号、Cloud WebSocket 信令、语音和视频按钮。Cloud 模式会显示“正在连接 / 已连接 / 已断开 / 连接异常”，通话点击时会主动连接 Cloud socket。
 - Phase 2 可靠性补齐：无效好友码会返回明确错误，不再显示成添加成功；Cloud 用户上线、下线和添加好友后会向本人和好友广播最新 state，用于刷新在线状态。
 - Phase 3 已部署：Modal `focus-pet-cloud` 已挂载 StepFun Secret 和独立 TURN Secret；`/healthz` 返回 `screenCheck.enabled=true`、`rtc.configValid=true`、`rtc.hasTurn=true`。
-- Phase 4 当前按产品决策跳过 Apple Developer ID 签名和 notarization，仅保留 ad-hoc signed DMG/ZIP 发布路径；公开文档必须继续说明 macOS 首次打开可能出现 Gatekeeper 提示。
+- Phase 4 已按产品决策跳过 Apple Developer ID 签名和 notarization，完成 ad-hoc signed DMG/ZIP/manifest GitHub Release 路径；公开文档继续说明 macOS 首次打开可能出现 Gatekeeper 提示。
+- v1.1.2 已准备发布到 GitHub Release，资产包含 `Focus-Pet-1.1.2-mac-arm64.dmg`、`Focus-Pet-1.1.2-mac-arm64.zip` 和 SHA-256 manifest；这版补齐宠物气泡提示、应用内直接下载更新包、Cloud 文字/图片消息、6 位数字好友码和更大的设置客户端面板。
 - 线上验证已跑通：`cloud-health`、`cloud:turn:verify -- --skip-api-ice`、`cloud:smoke -- --skip-screen-check`、完整 `cloud:smoke` 均通过。
 
 ## 暂缓范围
@@ -78,7 +79,7 @@ v1.1 只闭合三条主线：
 
 ## Phase 2：Cloud ID / 好友码 / 通话接入完整桌面 Pet
 
-目标：发布的完整桌宠 App 里就能创建 ID、显示好友码、加好友、语音、视频，不再依赖单独 `/client` 页面。
+目标：发布的完整桌宠 App 里就能创建 ID、显示/复制 6 位数字好友码、加好友、发文字、发图片、语音、视频，不再依赖单独 `/client` 页面。
 
 ### 问题
 
@@ -101,6 +102,7 @@ v1.1 只闭合三条主线：
    - `registerCloudUser()`
    - `getCloudMe()`
    - `addCloudFriend()`
+   - `sendCloudMessage()`
    - `clearCloudAccount()`
    - 只做 REST 包装，不新增依赖，不做复杂 SDK。
 
@@ -108,6 +110,7 @@ v1.1 只闭合三条主线：
    - `cloud:get-state`
    - `cloud:register`
    - `cloud:add-friend`
+   - `cloud:send-message`
    - `cloud:refresh`
    - `cloud:clear-account`
 
@@ -125,15 +128,16 @@ v1.1 只闭合三条主线：
    - 只适配 Cloud event payload。
 
 6. 收敛公开 UI：
-   - 公开版本主推 Cloud 好友码。
+   - 公开版本主推 Cloud 6 位数字好友码。
    - 不再主推本地 invite URL。
    - 不出现内部角色旧称。
 
 ### 验收标准
 
 - 新装 App 打开聊天页，能创建我的 ID。
-- 显示好友码。
+- 显示并复制 6 位数字好友码。
 - 两台机器可以互加好友码。
+- 两台机器可以发送 Cloud 文字和图片消息。
 - 好友在线状态能刷新。
 - 语音通话可以建立。
 - 视频通话可以建立。
@@ -191,13 +195,16 @@ npm run cloud:turn:verify
 
 1. 使用 ad-hoc signing 生成 macOS Apple Silicon DMG / ZIP。
 2. Release 附带 manifest / checksum。
-3. release 前固定执行：
+3. 当前 ad-hoc Release 前固定执行：
 
 ```bash
 npm test
 npm run check
 npm run verify:pet-render
-npm run release:preflight
+node scripts/release-preflight.js --check cloud-health
+npm run cloud:turn:verify -- --skip-api-ice
+npm run cloud:smoke
+npm run release:preflight -- --run fast
 npm run release:mac
 ```
 
@@ -230,7 +237,9 @@ npm run release:mac
 
 - `v1.0.4`：屏幕检查默认 Cloud 可用，关闭默认社交副作用。
 - `v1.1.0`：完整桌面 Pet 内置 Cloud ID / 好友码 / 语音 / 视频。
-- `v1.1.1`：TURN + notarized public release。
+- `v1.1.1`：Cloud 好友状态刷新、无效好友码错误反馈、线上 smoke 增强、TURN 配置验证和 ad-hoc signed GitHub Release。
+- `v1.1.2`：宠物气泡和系统通知提示更新，用户确认后直接下载并打开最新安装包；Cloud 好友码改为 6 位数字，桌面端支持 Cloud 文字/图片消息，设置类页面使用更大的客户端面板。
+- `v1.2.0` 或后续版本：在需要“免 Gatekeeper 提示”分发时，再做 Apple Developer ID 签名和 notarization。
 
 ## 最小开发顺序
 
@@ -241,7 +250,8 @@ npm run release:mac
 5. 把 Cloud 账号接进桌面聊天面板。
 6. 复用现有 WebRTC，切换本地 / Cloud socket。
 7. 配 TURN。
-8. 做 notarized release。
+8. 做 ad-hoc signed GitHub Release。
+9. Apple Developer ID 签名和 notarization 后移到后续版本。
 
 ## 原则
 

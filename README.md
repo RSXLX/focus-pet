@@ -18,20 +18,20 @@ Focus Pet is a medium-privacy desktop pet app for people who want lightweight fo
 ## Project Status
 
 - Public repository: [RSXLX/focus-pet](https://github.com/RSXLX/focus-pet)
-- Current release: [v1.1.1](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.1)
+- Current release: [v1.1.2](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2)
 - Published binary: macOS Apple Silicon DMG and ZIP
 - Source support: macOS and Windows development scripts are included
 - Signing status: public macOS builds are ad-hoc signed and not Apple-notarized yet
 
 ## Downloads
 
-Latest release: [v1.1.1](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.1)
+Latest release: [v1.1.2](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2)
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.1) | Download the DMG for the full desktop pet app. |
-| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.1) | ZIP archive is also available. |
-| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.1) | SHA-256 manifest is included. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2) | Download the DMG for the full desktop pet app. |
+| macOS Apple Silicon | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2) | ZIP archive is also available. |
+| Checksums | [Release assets](https://github.com/RSXLX/focus-pet/releases/tag/v1.1.2) | SHA-256 manifest is included. |
 
 macOS note: the current public build is ad-hoc signed but not Apple-notarized. On first launch, macOS Gatekeeper may require manual approval in System Settings or via right-click Open.
 
@@ -46,8 +46,8 @@ The public download is the full desktop pet package built with `npm run release:
 - Daily review: local 24-hour review with focus minutes, drift windows, task friction, and next actions.
 - Optional screen check: disabled by default; can use Focus Pet Cloud as a server-side StepFun proxy so downloaded apps do not embed API keys; results stay local unless screen-summary sharing is explicitly enabled.
 - Optional local social chat: invite links, web client, media messages, pet GIFs, and WebRTC signaling.
-- Focus Pet Cloud account and calls: the desktop pet can create a stable user ID, show a friend code, add a friend code, and use authenticated WebSocket signaling for one-to-one WebRTC voice/video calls.
-- Update notifications: checks the GitHub Release feed and notifies when a newer DMG/ZIP is available; installation remains user-driven.
+- Focus Pet Cloud account and chat: the desktop pet can create a stable user ID, show/copy a 6-digit friend code, add a friend code, send Cloud text/image messages, and use authenticated WebSocket signaling for one-to-one WebRTC voice/video calls.
+- Update notifications: checks the GitHub Release feed, nudges through the pet and system notification, then downloads and opens the newest DMG/ZIP directly after user confirmation.
 - Low-memory runtime: optional chat, diagnostics, screen check, LLM self-check, WebSocket, and GIF previews load on demand.
 
 ## Privacy Model
@@ -76,12 +76,12 @@ Optional capabilities such as screen check, LLM review, external chat, and WebRT
 
 ## Social Chat Modes
 
-Focus Pet separates local companion chat from Cloud realtime calls:
+Focus Pet separates local companion chat from Cloud chat/calls:
 
 - WeChat-style compact chat window (`微信式小聊天窗口`): supports text, media messages, pet GIF sharing, and voice messages (`语音消息`) recorded through `MediaRecorder`. The desktop UI supports press-and-hold recording (`按住说话`) and the voice shortcut (`语音快捷键`) `Alt+R`.
-- Cloud realtime calls: realtime voice chat (`实时语音聊天`) and realtime video chat (`实时视频聊天`) use WebRTC. Session setup uses authenticated WebSocket signaling (`WebSocket 信令`), and TURN must be configured for reliable NAT traversal.
+- Cloud chat and calls: the desktop pet supports text/image messages through Focus Pet Cloud. Realtime voice chat (`实时语音聊天`) and realtime video chat (`实时视频聊天`) use WebRTC. Session setup uses authenticated WebSocket signaling (`WebSocket 信令`), and TURN must be configured for reliable NAT traversal.
 
-For public multi-user distribution, use Focus Pet Cloud instead of exposing each desktop directly. It provides stable user IDs, friend-code pairing, device-bound auth tokens, authenticated WebSocket signaling, and ICE/TURN configuration for one-to-one WebRTC voice/video. See [Focus Pet Cloud](docs/focus-pet-cloud.md).
+For public multi-user distribution, use Focus Pet Cloud instead of exposing each desktop directly. It provides stable user IDs, 6-digit friend-code pairing, device-bound auth tokens, Cloud text/image messages, authenticated WebSocket signaling, and ICE/TURN configuration for one-to-one WebRTC voice/video. See [Focus Pet Cloud](docs/focus-pet-cloud.md).
 
 ## Quick Start From Source
 
@@ -142,7 +142,9 @@ macOS DMG, ZIP, and checksum manifest:
 npm run release:mac
 ```
 
-Developer ID signing and notarization are optional but recommended for public distribution:
+Current GitHub Release builds use `release:mac`: the app is ad-hoc signed before the DMG/ZIP archives are created, and the release includes a SHA-256 manifest. Do not describe this path as seamless installation because it is not Apple-notarized.
+
+Developer ID signing and notarization are optional future distribution upgrades:
 
 ```bash
 MAC_CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" npm run sign:mac
@@ -153,7 +155,7 @@ APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx" \
 npm run notarize:mac
 ```
 
-`npm run verify:mac` validates codesign, Gatekeeper, and the stapled notarization ticket; it exits non-zero if any public-release gate fails.
+`npm run verify:mac` validates codesign, Gatekeeper, and the stapled notarization ticket; it is intended for Apple-notarized builds and is expected to fail for the current ad-hoc signed public build.
 
 Windows unpacked build:
 
@@ -220,7 +222,7 @@ docs/
 | Diagnostics | [docs/diagnostics.md](docs/diagnostics.md) |
 | Focus Pet Cloud | [docs/focus-pet-cloud.md](docs/focus-pet-cloud.md) |
 | Optimization plan | [docs/optimization-plan.md](docs/optimization-plan.md) |
-| Release notes | [docs/releases/v1.1.1.md](docs/releases/v1.1.1.md) |
+| Release notes | [docs/releases/v1.1.2.md](docs/releases/v1.1.2.md) |
 
 ## Development Notes
 

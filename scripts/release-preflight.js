@@ -1265,8 +1265,18 @@ function buildReleasePreflightChecklist(options = {}) {
       command: 'npm run package:mac',
       runGroup: 'package',
       platform: 'darwin',
+      manual: true,
+      required: false,
+      note: '仅需 .app 调试包时执行；公开下载默认使用 macOS Release 资产步骤。'
+    },
+    {
+      id: 'mac-release-assets',
+      title: 'macOS Release 资产',
+      command: 'npm run release:mac',
+      runGroup: 'package',
+      platform: 'darwin',
       required: platform === 'darwin',
-      note: 'macOS 发布前生成本机 app 产物。'
+      note: '当前公开发布路径：生成 ad-hoc signed DMG、ZIP 和 SHA-256 manifest。'
     },
     {
       id: 'mac-remote-client-release',
@@ -1284,8 +1294,9 @@ function buildReleasePreflightChecklist(options = {}) {
       command: 'npm run sign:mac && npm run verify:mac',
       runGroup: 'package',
       platform: 'darwin',
-      required: platform === 'darwin',
-      note: '发布签名环境准备好后执行。'
+      manual: true,
+      required: false,
+      note: '仅发布 Apple Developer ID 包时执行；ad-hoc signed Release 不跑 verify:mac。'
     },
     {
       id: 'mac-notarization',
@@ -1293,8 +1304,9 @@ function buildReleasePreflightChecklist(options = {}) {
       command: 'npm run notarize:mac && npm run verify:mac',
       runGroup: 'package',
       platform: 'darwin',
-      required: platform === 'darwin',
-      note: 'Apple ID、Team ID 和 App 专用密码准备好后执行，并在 staple 后再次验证。'
+      manual: true,
+      required: false,
+      note: '仅发布 Apple-notarized build 时执行，并在 staple 后再次验证。'
     },
     {
       id: 'windows-package',

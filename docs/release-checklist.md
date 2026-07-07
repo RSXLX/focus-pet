@@ -1,6 +1,6 @@
 # Focus Pet Release Checklist
 
-更新时间：2026-07-06
+更新时间：2026-07-07
 
 ## 本机门禁
 
@@ -40,20 +40,28 @@ Modal 用来部署 Focus Pet Cloud 和保存/下发 TURN ICE 配置；不要把 
 
 ## macOS 门禁
 
-如果要发布 Apple-notarized build，固定执行：
+当前公开下载包按 ad-hoc signed / not notarized 路径发布，固定执行：
+
+```bash
+npm run release:preflight -- --run fast
+npm run release:mac
+```
+
+`release:mac` 会生成 DMG、ZIP 和 SHA-256 manifest，并在归档前执行 ad-hoc signing 与 `codesign --verify`。
+
+没有 Developer ID 和 notarization 凭据时，不允许把 README 写成“下载即无拦截使用”。
+ad-hoc signed / not notarized build 必须在 Release notes 和 README 写明 macOS Gatekeeper 可能需要用户手动允许。
+
+如果要发布 Apple-notarized build，额外执行：
 
 ```bash
 npm run release:preflight -- --run full
-npm run release:mac
 npm run sign:mac
 npm run notarize:mac
 npm run verify:mac
 ```
 
-`verify:mac` 必须验证 codesign、Gatekeeper 和 stapled notarization ticket；任一失败都应阻断公开发布。
-
-没有 Developer ID 和 notarization 凭据时，不允许把 README 写成“下载即无拦截使用”。
-如果明确选择发布 ad-hoc signed / not notarized build，可以跳过 `notarize:mac` 和 `verify:mac`，但 Release notes 和 README 必须写明 macOS Gatekeeper 可能需要用户手动允许。
+`verify:mac` 会验证 codesign、Gatekeeper 和 stapled notarization ticket；它只作为 Apple-notarized build 的门禁，不作为当前 ad-hoc Release 的门禁。
 
 ## GitHub Release
 
@@ -67,5 +75,6 @@ Release 必须包含：
 
 ## 当前外部阻塞
 
-- TURN 服务需要有效的 `focus-pet-cloud-turn` Secret。
-- notarization 需要 Apple Developer ID、Team ID 和 app-specific password。
+- 当前 ad-hoc signed GitHub Release 路径没有外部阻塞。
+- TURN 已通过 `focus-pet-cloud-turn` Secret 配置；每次发布前仍需跑 Cloud 门禁重新确认。
+- Apple-notarized build 仍需要 Apple Developer ID、Team ID 和 app-specific password。

@@ -3320,6 +3320,13 @@ test('Focus Pet Cloud registers device-bound users with stable public ids', () =
   assert.match(result.state.users[0].deviceIdHash, /^[a-f0-9]{64}$/);
   assert.equal(cloudService.resolveUserAuth('cloud-token-a', result.state, { deviceId: 'device-A' }).userId, 'user_abc123');
   assert.equal(cloudService.resolveUserAuth('cloud-token-a', result.state, { deviceId: 'device-B' }), null);
+
+  const generated = cloudService.registerUser({ displayName: '数字码', deviceId: 'device-C' }, {
+    state: result.state,
+    id: () => 'user_numeric',
+    token: () => 'cloud-token-c'
+  });
+  assert.match(generated.user.friendCode, /^\d{6}$/);
 });
 
 test('desktop Cloud client registers refreshes and exposes chat-shaped state', async () => {
@@ -3350,6 +3357,7 @@ test('desktop Cloud client registers refreshes and exposes chat-shaped state', a
         json: async () => ({
           self: { id: 'user_a', displayName: '小林', friendCode: 'FP-A', online: true },
           friends: [{ id: 'user_b', displayName: 'Bob', friendCode: 'FP-B', online: true }],
+          messages: [{ id: 'cloud-msg-1', from: 'user_b', to: 'user_a', type: 'text', text: 'hi', createdAt: '2026-07-02T10:01:00.000Z' }],
           iceServers: [{ urls: 'turn:turn.example.com:3478?transport=tcp' }]
         })
       };
@@ -3366,6 +3374,7 @@ test('desktop Cloud client registers refreshes and exposes chat-shaped state', a
   assert.equal(state.signedIn, true);
   assert.equal(state.self.friendCode, 'FP-A');
   assert.deepEqual(state.friends.map(friend => [friend.id, friend.name, friend.status]), [['user_b', 'Bob', 'online']]);
+  assert.equal(state.messages[0].text, 'hi');
   assert.match(state.websocketUrl, /^wss:\/\/cloud\.example\.com\/\?token=token-a&deviceId=device-/);
   assert.equal(requests.length, 2);
   assert.equal(JSON.parse(fs.readFileSync(accountPath, 'utf8')).authToken, 'token-a');
@@ -3428,21 +3437,29 @@ test('desktop pet wires Focus Pet Cloud account IPC into the chat surface', () =
 
   assert.match(packageJson.scripts.check, /src\/cloud-client\.js/);
   assert.match(main, /require\('\.\/cloud-client'\)/);
-  for (const channel of ['cloud:get-state', 'cloud:register', 'cloud:add-friend', 'cloud:refresh', 'cloud:clear-account']) {
+  for (const channel of ['cloud:get-state', 'cloud:register', 'cloud:add-friend', 'cloud:send-message', 'cloud:refresh', 'cloud:clear-account']) {
     assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`));
   }
   assert.match(preload, /getCloudState: \(\) => ipcRenderer\.invoke\('cloud:get-state'\)/);
   assert.match(preload, /registerCloudUser: input => ipcRenderer\.invoke\('cloud:register', input\)/);
+  assert.match(preload, /sendCloudMessage: message => ipcRenderer\.invoke\('cloud:send-message', message\)/);
   assert.match(renderer, /chatState = await window\.focusPet\.getCloudState\(\)/);
   assert.match(renderer, /chatState\.websocketUrl/);
   assert.match(renderer, /registerCloudChatAccount/);
   assert.match(renderer, /addCloudChatFriend/);
+  assert.match(renderer, /copyCloudFriendCode/);
+  assert.match(renderer, /window\.focusPet\.sendCloudMessage\(outgoing\)/);
+  assert.match(renderer, /readFileAsDataUrl\(file\)/);
   assert.match(renderer, /cloudChatConnectionStatus/);
   assert.match(renderer, /function chatSocketOpen\(\)/);
-  assert.match(renderer, /Cloud 正在连接/);
-  assert.match(renderer, /chatCallAudio\.disabled = isCloud \? !signedIn \|\| !hasFriend \|\| !socketReady : false/);
+  assert.match(renderer, /ensureCloudChatSocketOpen/);
+  assert.match(renderer, /Cloud 正在连接，连上后会发起通话/);
+  assert.match(renderer, /chatCallAudio\.disabled = isCloud \? !signedIn \|\| !hasFriend : false/);
+  assert.doesNotMatch(renderer, /暂不发送文字消息/);
   assert.match(indexHtml, /id="cloudChatAccount"/);
   assert.match(indexHtml, /id="cloudFriendCode"/);
+  assert.match(indexHtml, /id="cloudCopyCodeButton"/);
+  assert.match(indexHtml, /placeholder="6 位好友码"/);
   assert.match(indexHtml, /wss:\/\/reecewong520--focus-pet-cloud-cloud\.modal\.run/);
   assert.doesNotMatch(indexHtml, new RegExp(`Control${'led'}|被控${'制端'}`));
 });
@@ -3469,6 +3486,60 @@ test('Focus Pet Cloud pairs users by friend code with reciprocal friendship', ()
     ['user_bob', 'user_alice']
   ]);
   assert.deepEqual(cloudService.clientStateForUser({ userId: 'user_alice' }, pair.state).friends.map(friend => friend.id), ['user_bob']);
+});
+
+test('Focus Pet Cloud sends text and image messages between friends', () => {
+  const state = cloudService.createInitialCloudState();
+  const alice = cloudService.registerUser({ displayName: 'Alice', deviceId: 'device-A' }, {
+    state,
+    id: () => 'user_alice',
+    token: () => 'token-a',
+    friendCode: () => '111111'
+  });
+  const bob = cloudService.registerUser({ displayName: 'Bob', deviceId: 'device-B' }, {
+    state: alice.state,
+    id: () => 'user_bob',
+    token: () => 'token-b',
+    friendCode: () => '222222'
+  });
+  const pair = cloudService.addFriendByCode('222222', { state: bob.state, auth: { userId: 'user_alice' } });
+  const text = cloudService.addCloudMessage({
+    to: 'user_bob',
+    type: 'text',
+    text: '今晚 8 点复盘',
+    clientId: 'client-text-1'
+  }, {
+    state: pair.state,
+    auth: { userId: 'user_alice' },
+    now: () => '2026-07-02T10:10:00.000Z'
+  });
+  const image = cloudService.addCloudMessage({
+    to: 'user_alice',
+    type: 'image',
+    text: '截图',
+    media: {
+      name: '../screen.png',
+      mimeType: 'image/png',
+      size: 10,
+      url: 'data:image/png;base64,Y2xvdWQtaW1hZ2U='
+    }
+  }, {
+    state: text.state,
+    auth: { userId: 'user_bob' },
+    now: () => '2026-07-02T10:11:00.000Z'
+  });
+
+  assert.equal(text.message.from, 'user_alice');
+  assert.equal(text.message.type, 'text');
+  assert.equal(image.message.media.name, 'screen.png');
+  assert.match(image.message.media.url, /^data:image\/png;base64,/);
+  assert.deepEqual(cloudService.clientStateForUser({ userId: 'user_alice' }, image.state).messages.map(message => message.type), ['text', 'image']);
+  assert.deepEqual(cloudService.clientStateForUser({ userId: 'user_bob' }, image.state).messages.map(message => message.type), ['text', 'image']);
+  assert.throws(() => cloudService.addCloudMessage({
+    to: 'user_eve',
+    type: 'text',
+    text: 'nope'
+  }, { state: image.state, auth: { userId: 'user_alice' } }), /unknown message participant/);
 });
 
 test('Focus Pet Cloud refreshes peer state when friends or sockets change', () => {
@@ -4761,6 +4832,7 @@ test('release preflight checklist documents required gates and supports fast loc
     'cloud-health',
     'cloud-live-smoke',
     'mac-package',
+    'mac-release-assets',
     'mac-remote-client-release',
     'mac-signing',
     'mac-notarization',
@@ -4808,13 +4880,20 @@ test('release preflight checklist documents required gates and supports fast loc
     health: { ok: true, screenCheck: { enabled: true }, rtc: { configValid: false, hasTurn: false } }
   }).failures, ['turn-config-invalid', 'turn-missing']);
   assert.equal(checklist.find(item => item.id === 'mac-package').platform, 'darwin');
+  assert.equal(checklist.find(item => item.id === 'mac-package').manual, true);
+  assert.equal(checklist.find(item => item.id === 'mac-release-assets').command, 'npm run release:mac');
+  assert.equal(checklist.find(item => item.id === 'mac-release-assets').platform, 'darwin');
+  assert.equal(checklist.find(item => item.id === 'mac-release-assets').runGroup, 'package');
+  assert.equal(checklist.find(item => item.id === 'mac-release-assets').manual, undefined);
   assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').command, 'npm run release:mac:remote-client');
   assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').platform, 'darwin');
   assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').runGroup, 'package');
   assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').manual, true);
+  assert.equal(checklist.find(item => item.id === 'mac-signing').manual, true);
   assert.equal(checklist.find(item => item.id === 'mac-notarization').command, 'npm run notarize:mac && npm run verify:mac');
   assert.equal(checklist.find(item => item.id === 'mac-notarization').platform, 'darwin');
   assert.equal(checklist.find(item => item.id === 'mac-notarization').runGroup, 'package');
+  assert.equal(checklist.find(item => item.id === 'mac-notarization').manual, true);
   assert.equal(checklist.find(item => item.id === 'windows-package').platform, 'win32');
 
   const fastIds = selectReleasePreflightItems(checklist, { run: 'fast' }).map(item => item.id);
@@ -4822,7 +4901,7 @@ test('release preflight checklist documents required gates and supports fast loc
   const fullIds = selectReleasePreflightItems(checklist, { run: 'full' }).map(item => item.id);
   assert.deepEqual(fullIds, ['node-tests', 'syntax-check', 'diagnostics-summary', 'diagnostics-bundle', 'diagnostics-bundle-output', 'render-qa', 'screen-pipeline', 'package-scripts', 'chat-backend-deploy', 'cloud-health', 'docs-boundary', 'optimization-plan', 'error-log']);
   const packageIds = selectReleasePreflightItems(checklist, { run: 'package' }).map(item => item.id);
-  assert.deepEqual(packageIds, ['mac-package', 'mac-signing', 'mac-notarization']);
+  assert.deepEqual(packageIds, ['mac-release-assets']);
   assert.deepEqual(parseArgs(['--json', '--run=fast', '--check=error-log']), {
     json: true,
     run: 'fast',
@@ -7093,6 +7172,29 @@ test('desktop runtime keeps optional social and GIF resources lazy for lower mem
   assert.match(renderer, /function setPetGifTrayVisible\(visible\)[\s\S]*if \(!visible\) releasePetGifTray\(\)/);
 });
 
+test('desktop UI keeps the pet float compact and opens settings as a larger client panel', () => {
+  const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'preload.js'), 'utf8');
+  const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'styles.css'), 'utf8');
+  const verifyRender = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'verify-pet-render.js'), 'utf8');
+
+  assert.match(main, /client: \{ width: 820, height: 720 \}/);
+  assert.match(main, /mode === 'client' \? WINDOW_SIZES\.client : WINDOW_SIZES\.expanded/);
+  assert.match(preload, /setExpanded: \(expanded, mode\) => ipcRenderer\.invoke\('app:set-expanded', expanded, mode\)/);
+  assert.match(renderer, /const CLIENT_SURFACES = new Set\(\['settings', 'onboarding', 'review'\]\)/);
+  assert.match(renderer, /await setExpanded\(true, 'client'\)/);
+  assert.match(renderer, /async function showChat[\s\S]*await setExpanded\(true, 'panel'\)/);
+  assert.match(renderer, /async function showTasks[\s\S]*await setExpanded\(true, 'panel'\)/);
+  assert.match(styles, /#reviewToggle,\s*#onboardingToggle,\s*#openData\s*\{\s*display: none;/);
+  assert.match(styles, /\.pet\[data-window-mode="client"\] \.avatar/);
+  assert.match(styles, /\.pet\.expanded\[data-window-mode="client"\] \.panel/);
+  assert.match(styles, /\.pet\[data-window-mode="client"\] \.settings-tab[\s\S]*font-size: 14px/);
+  assert.match(verifyRender, /const clientWindowMode = domState\.windowMode === 'client'/);
+  assert.match(verifyRender, /clientPanelModeOk/);
+  assert.match(verifyRender, /avatarWidth: clientWindowMode \|\| domState\.avatarRect\.width > 100/);
+});
+
 test('desktop startup keeps diagnostics and screen monitor modules lazy', () => {
   const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
   const diagnostics = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'diagnostics.js'), 'utf8');
@@ -7134,7 +7236,13 @@ test('desktop update push is wired through GitHub release checks and notificatio
   assert.match(main, /checkLatestVersion/);
   assert.match(main, /scheduleAutomaticUpdateChecks/);
   assert.match(main, /lastNotifiedUpdateVersion/);
+  assert.match(main, /async function downloadUpdateAsset\(update = \{\}\)/);
+  assert.match(main, /app\.getPath\('downloads'\)/);
+  assert.match(main, /safeUpdateAssetName/);
+  assert.match(main, /shell\.openPath\(targetPath\)/);
+  assert.match(main, /const downloaded = await downloadUpdateAsset\(update\)/);
   assert.match(main, /new Notification\(/);
+  assert.match(main, /点击直接下载最新安装包/);
   assert.match(main, /ipcMain\.handle\('app:check-update'[\s\S]*checkForUpdate\(options/);
   assert.match(main, /ipcMain\.handle\('app:open-update-download'[\s\S]*openUpdateDownload/);
 
@@ -7142,7 +7250,15 @@ test('desktop update push is wired through GitHub release checks and notificatio
   assert.match(preload, /openUpdateDownload:\s*update => ipcRenderer\.invoke\('app:open-update-download', update\)/);
 
   assert.match(renderer, /async function checkUpdates\(options = \{\}\)/);
+  assert.match(renderer, /pendingUpdatePrompt/);
+  assert.match(renderer, /lastUpdateNudgeVersion/);
   assert.match(renderer, /window\.focusPet\.checkUpdate\(\{ notify: options\.notify !== false \}\)/);
+  assert.match(renderer, /showNudge\(\{\s*source:\s*'update'[\s\S]*target:\s*'update'[\s\S]*label:\s*'新'/);
+  assert.match(renderer, /点我直接下载更新/);
+  assert.match(renderer, /if \(target === 'update'\)[\s\S]*window\.focusPet\.openUpdateDownload\(pendingUpdatePrompt\)/);
+  assert.match(renderer, /正在下载 Focus Pet/);
+  assert.match(renderer, /已下载并打开/);
+  assert.match(renderer, /if \(!nudge && \(!expanded \|\| activeSurface === 'home'\)\) message\.textContent = status\.message/);
   assert.match(renderer, /if \(result\.available && result\.url && options\.manual\)/);
   assert.match(renderer, /window\.focusPet\.openUpdateDownload\(result\)/);
   assert.match(renderer, /checkUpdatesButton\.addEventListener\('click', \(\) => checkUpdates\(\{ manual: true \}\)\)/);

@@ -28,6 +28,9 @@ const DEFAULT_SCREEN_CHECK_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 const DEFAULT_SCREEN_CHECK_TIMEOUT_MS = 15_000;
 const DEFAULT_SCREEN_CHECK_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_SCREEN_CHECK_RATE_LIMIT_MAX = 20;
+const CLOUD_MESSAGE_LIMIT = 700;
+const CLOUD_MESSAGE_TEXT_LIMIT = 4000;
+const DEFAULT_CLOUD_MESSAGE_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const REALTIME_EVENTS = new Set([
   'call-invite',
   'call-answer',
@@ -78,9 +81,19 @@ function makeUserId() {
 }
 
 function makeFriendCode() {
-  const left = Math.random().toString(36).slice(2, 6).toUpperCase();
-  const right = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `FP-${left}-${right}`;
+  return String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0');
+}
+
+function makeUniqueFriendCode(state = {}) {
+  for (let index = 0; index < 80; index += 1) {
+    const code = makeFriendCode();
+    if (!findUserByCode(state, code)) return code;
+  }
+  return makeFriendCode();
+}
+
+function makeCloudMessageId() {
+  return `cloud_msg_${randomUUID().replaceAll('-', '').slice(0, 24)}`;
 }
 
 function secretHash(value) {
@@ -105,6 +118,7 @@ function createInitialCloudState(options = {}) {
     createdAt: nowIso(options),
     users: [],
     friendships: [],
+    messages: [],
     callAuditLog: []
   };
 }
@@ -144,6 +158,90 @@ function normalizeFriendship(friendship = {}) {
   };
 }
 
+function cloudMessageMaxImageBytes(env = process.env) {
+  return readBoundedInteger(
+    env.FOCUS_PET_CLOUD_MESSAGE_MAX_IMAGE_BYTES,
+    DEFAULT_CLOUD_MESSAGE_MAX_IMAGE_BYTES,
+    64 * 1024,
+    10 * 1024 * 1024
+  );
+}
+
+function cloudMessageMaxBodyBytes(env = process.env) {
+  return cloudMessageMaxImageBytes(env) + 64 * 1024;
+}
+
+function cleanCloudMessageText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, CLOUD_MESSAGE_TEXT_LIMIT);
+}
+
+function cleanMediaName(value) {
+  const name = path.basename(String(value || '').replace(/[\0\r\n]/g, '').trim());
+  return (name || 'image').slice(0, 120);
+}
+
+function normalizeCloudMessageMedia(media = {}, options = {}) {
+  if (!media || typeof media !== 'object') return null;
+  const url = String(media.url || media.dataUrl || '').trim();
+  if (!url) return null;
+  if (!/^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(url)) {
+    if (!options.strict) return null;
+    const error = new Error('only image dataUrl media is supported');
+    error.statusCode = 400;
+    throw error;
+  }
+  const maxBytes = options.maxImageBytes || DEFAULT_CLOUD_MESSAGE_MAX_IMAGE_BYTES;
+  if (Buffer.byteLength(url, 'utf8') > maxBytes) {
+    if (!options.strict) return null;
+    const error = new Error('image dataUrl too large');
+    error.statusCode = 413;
+    throw error;
+  }
+  const mimeType = String(media.mimeType || url.slice(5, url.indexOf(';')) || 'image/png').toLowerCase();
+  return {
+    id: String(media.id || makeCloudMessageId()),
+    name: cleanMediaName(media.name || 'image'),
+    mimeType,
+    size: Math.max(0, Math.floor(Number(media.size) || 0)),
+    url
+  };
+}
+
+function normalizeStoredCloudMessage(message = {}, options = {}) {
+  if (!message || typeof message !== 'object') return null;
+  const from = String(message.from || '').trim();
+  const to = String(message.to || '').trim();
+  if (!from || !to || from === to) return null;
+  const media = normalizeCloudMessageMedia(message.media, options);
+  const type = media ? 'image' : (message.type === 'image' ? 'image' : 'text');
+  const text = cleanCloudMessageText(message.text);
+  if (type === 'image' && !media) return null;
+  if (type === 'text' && !text) return null;
+  return {
+    id: String(message.id || makeCloudMessageId()),
+    clientId: String(message.clientId || ''),
+    from,
+    to,
+    type,
+    text,
+    media,
+    deliveryStatus: ['queued', 'sent', 'delivered', 'read', 'received', 'failed'].includes(message.deliveryStatus)
+      ? message.deliveryStatus
+      : 'sent',
+    createdAt: String(message.createdAt || nowIso(options)),
+    deliveredAt: String(message.deliveredAt || ''),
+    readAt: String(message.readAt || '')
+  };
+}
+
+function normalizeCloudMessages(input = [], options = {}) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map(item => normalizeStoredCloudMessage(item, options))
+    .filter(Boolean)
+    .slice(-CLOUD_MESSAGE_LIMIT);
+}
+
 function migrateCloudState(input = {}, options = {}) {
   const fallback = createInitialCloudState(options);
   const state = input && typeof input === 'object' ? input : fallback;
@@ -152,6 +250,7 @@ function migrateCloudState(input = {}, options = {}) {
     createdAt: String(state.createdAt || fallback.createdAt),
     users: Array.isArray(state.users) ? state.users.map(normalizeUser).filter(Boolean) : [],
     friendships: Array.isArray(state.friendships) ? state.friendships.map(normalizeFriendship).filter(Boolean) : [],
+    messages: normalizeCloudMessages(state.messages || []),
     callAuditLog: normalizeCallAuditLog(state.callAuditLog || [])
   };
 }
@@ -208,7 +307,7 @@ function registerUser(input = {}, options = {}) {
   const user = {
     id: typeof options.id === 'function' ? options.id() : makeUserId(),
     displayName: cleanDisplayName(input.displayName),
-    friendCode: cleanCode(typeof options.friendCode === 'function' ? options.friendCode() : makeFriendCode()),
+    friendCode: cleanCode(typeof options.friendCode === 'function' ? options.friendCode() : makeUniqueFriendCode(state)),
     deviceIdHash: secretHash(deviceId),
     createdAt,
     lastSeenAt: createdAt,
@@ -278,6 +377,78 @@ function addFriendByCode(friendCode, options = {}) {
   return { ok: true, friend: publicUser(friend, { online: userOnline(friend.id) }), state };
 }
 
+function cloudMessageForUser(message = {}, userId = '') {
+  if (message.from !== userId && message.to !== userId) return null;
+  return {
+    ...message,
+    deliveryStatus: message.from === userId ? message.deliveryStatus : 'received'
+  };
+}
+
+function conversationMessagesForCloudUser(state = {}, userId = '', limit = 160) {
+  const id = String(userId || '').trim();
+  if (!id) return [];
+  const friendIds = new Set((state.friendships || [])
+    .filter(item => item.userId === id)
+    .map(item => item.friendId)
+    .filter(Boolean));
+  return (state.messages || [])
+    .filter(message => (
+      (message.from === id && friendIds.has(message.to))
+      || (message.to === id && friendIds.has(message.from))
+    ))
+    .slice(-limit)
+    .map(message => cloudMessageForUser(message, id))
+    .filter(Boolean);
+}
+
+function addCloudMessage(input = {}, options = {}) {
+  const state = migrateCloudState(options.state || loadState(options), options);
+  const auth = options.auth || {};
+  const from = String(auth.userId || '').trim();
+  const to = String(input.to || '').trim();
+  if (!from) {
+    const error = new Error('unauthorized');
+    error.statusCode = 401;
+    throw error;
+  }
+  if (!to) {
+    const error = new Error('message recipient required');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!findUserById(state, from) || !findUserById(state, to)) {
+    const error = new Error('unknown message participant');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!areFriends(state, from, to)) {
+    const error = new Error('not friends');
+    error.statusCode = 403;
+    throw error;
+  }
+  const message = normalizeStoredCloudMessage({
+    ...input,
+    from,
+    to,
+    id: input.id || makeCloudMessageId(),
+    deliveryStatus: 'sent',
+    createdAt: input.createdAt || nowIso(options)
+  }, {
+    ...options,
+    strict: true,
+    maxImageBytes: cloudMessageMaxImageBytes(options.env || process.env)
+  });
+  if (!message) {
+    const error = new Error('message text or image required');
+    error.statusCode = 400;
+    throw error;
+  }
+  state.messages = normalizeCloudMessages([...(state.messages || []), message], options);
+  if (!options.state) saveState(state);
+  return { message, state };
+}
+
 function clientStateForUser(auth = {}, state = loadState(), options = {}) {
   const user = findUserById(state, auth.userId);
   if (!user) return null;
@@ -290,6 +461,7 @@ function clientStateForUser(auth = {}, state = loadState(), options = {}) {
     version: CLOUD_STATE_VERSION,
     self: publicUser(user, { online: true }),
     friends,
+    messages: conversationMessagesForCloudUser(state, user.id, 160),
     iceServers: rtcIceServers(options.env || process.env)
   };
 }
@@ -835,6 +1007,7 @@ function healthState(options = {}) {
     ok: true,
     users: (state.users || []).length,
     friendships: (state.friendships || []).length,
+    messages: (state.messages || []).length,
     websocket: {
       enabled: true,
       clients: clients.size
@@ -865,6 +1038,13 @@ function sendToUser(userId, event, payload) {
     if (client.userId !== userId) continue;
     if (sendSocket(client.socket, event, payload)) delivered += 1;
   }
+  return delivered;
+}
+
+function broadcastCloudMessage(message = {}) {
+  const ids = [message.from, message.to].filter(Boolean);
+  let delivered = 0;
+  for (const id of [...new Set(ids)]) delivered += sendToUser(id, 'message', message);
   return delivered;
 }
 
@@ -932,6 +1112,22 @@ async function handleApi(req, res) {
   if (!auth) return jsonResponse(res, 401, { error: 'unauthorized' });
   if (req.method === 'GET' && url.pathname === '/api/me') return jsonResponse(res, 200, clientStateForUser(auth, state, { env: process.env }));
   if (req.method === 'GET' && url.pathname === '/api/ice') return jsonResponse(res, 200, { iceServers: rtcIceServers() });
+  if (req.method === 'POST' && url.pathname === '/api/messages') {
+    let body;
+    try {
+      body = await parseJson(req, { maxBytes: cloudMessageMaxBodyBytes(process.env) });
+    } catch (error) {
+      return jsonResponse(res, error.statusCode === 413 ? 413 : 400, { ok: false, error: error.message });
+    }
+    try {
+      const result = addCloudMessage(body, { state, auth, env: process.env });
+      saveState(result.state);
+      broadcastCloudMessage(result.message);
+      return jsonResponse(res, 200, { ok: true, message: result.message });
+    } catch (error) {
+      return jsonResponse(res, error.statusCode || 400, { ok: false, error: error.message });
+    }
+  }
   if (req.method === 'POST' && url.pathname === '/api/friends') {
     const body = await parseJson(req);
     const result = addFriendByCode(body.friendCode, { state, auth });
@@ -1055,8 +1251,11 @@ module.exports = {
   registerUser,
   resolveUserAuth,
   addFriendByCode,
+  addCloudMessage,
   clientStateForUser,
+  conversationMessagesForCloudUser,
   normalizeCloudRealtimeEvent,
+  normalizeStoredCloudMessage,
   recordCloudRealtimeAudit,
   normalizeCallAuditLog,
   cloudScreenCheckLlmConfig,

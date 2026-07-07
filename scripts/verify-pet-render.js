@@ -2801,6 +2801,16 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     }
   }
   await delay(120);
+  const windowMode = await browserWindow.webContents.executeJavaScript(`
+    document.querySelector('#pet')?.dataset.windowMode || 'compact'
+  `).catch(() => 'compact');
+  const effectiveWindowSize = windowMode === 'client'
+    ? { width: 820, height: 720 }
+    : scenario.windowSize;
+  if (effectiveWindowSize.width !== scenario.windowSize.width || effectiveWindowSize.height !== scenario.windowSize.height) {
+    browserWindow.setSize(effectiveWindowSize.width, effectiveWindowSize.height, false);
+    await delay(180);
+  }
 
   const domState = await browserWindow.webContents.executeJavaScript(`
     (() => {
@@ -2930,6 +2940,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
       });
       return {
         petClasses: Array.from(pet.classList),
+        windowMode: pet.dataset.windowMode || '',
         bubble: {
           rect: {
             left: bubbleRect.left,
@@ -3423,7 +3434,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
   const image = await browserWindow.webContents.capturePage();
   fs.writeFileSync(screenshotPath, image.toPNG());
   if (scenario.name === 'compact') fs.writeFileSync(legacyScreenshotPath, image.toPNG());
-  const pixelStats = countOpaquePixels(image, domState.avatarRect, scenario.windowSize);
+  const pixelStats = countOpaquePixels(image, domState.avatarRect, effectiveWindowSize);
   const careCooldownHomeOk = (impact, meta = '刚休息过', title = `刚刚休息过，${impact}；约30秒后再继续。打开照料菜单`) => (
     domState.petStateSummary === '刚照料过，先观察状态'
     && domState.petCareCue === '观察变化'
@@ -6079,6 +6090,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.avatarA11y.aria.includes('看着屏幕')
     && domState.avatarA11y.aria.includes('任务偏多')
   );
+  const clientWindowMode = domState.windowMode === 'client';
   const interactiveSurface = ['tasks', 'review', 'settings', 'chat'].includes(domState.surface);
   const activeInteractionPanel = domState.surface === 'chat' ? domState.chatPanelRect : domState.panel;
   const activePanelVisible = activeInteractionPanel
@@ -6086,7 +6098,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && activeInteractionPanel.display !== 'none'
     && activeInteractionPanel.rect.width > 0
     && activeInteractionPanel.rect.height > 0;
-  const avatarBesideInteractivePanelOk = !interactiveSurface || !activePanelVisible || (
+  const avatarBesideInteractivePanelOk = clientWindowMode || !interactiveSurface || !activePanelVisible || (
     rectRangesOverlap(domState.avatarRect.top, domState.avatarRect.bottom, activeInteractionPanel.rect.top, activeInteractionPanel.rect.bottom)
     && (
       domState.avatarRect.left >= activeInteractionPanel.rect.right + 2
@@ -6122,11 +6134,18 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     { visible: !domState.careMenu.hidden, rect: domState.careMenu.rect },
     { visible: domState.petStatsDisplay !== 'none', rect: domState.careMenu.statsRect }
   ];
-  const expandedHtmlBesidePetOk = !domState.petClasses.includes('expanded') || expandedHtmlRects.every(item => (
+  const expandedHtmlBesidePetOk = clientWindowMode || !domState.petClasses.includes('expanded') || expandedHtmlRects.every(item => (
     !item.visible
     || item.rect.width === 0
     || item.rect.left >= 150
   ));
+  const clientPanelModeOk = !clientWindowMode || (
+    activePanelVisible
+    && domState.panel.rect.left <= 24
+    && domState.panel.rect.width >= 760
+    && domState.bubble.rect.left <= 24
+    && domState.bubble.rect.width >= 760
+  );
   const feedbackPunctuationOk = !/[。.!！] ·/.test(domState.careFeedback.reason);
   const careMenuContextOk = domState.careMenu.hidden
     || domState.contextDisplay === 'none'
@@ -6136,11 +6155,12 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
   const checks = {
     spritePath: domState.spriteBackgroundImage.includes('nervy-sci-fi-kid/spritesheet.webp'),
     spriteSize: domState.spriteBackgroundSize === '1536px 6240px',
-    avatarWidth: domState.avatarRect.width > 100,
-    avatarHeight: domState.avatarRect.height > 100,
-    opaquePixels: pixelStats.opaquePixels > 1000,
-    coloredPixels: pixelStats.coloredPixels > 500,
+    avatarWidth: clientWindowMode || domState.avatarRect.width > 100,
+    avatarHeight: clientWindowMode || domState.avatarRect.height > 100,
+    opaquePixels: clientWindowMode || pixelStats.opaquePixels > 1000,
+    coloredPixels: clientWindowMode || pixelStats.coloredPixels > 500,
     renderErrors: domState.renderErrors.length === 0,
+    clientPanelModeOk,
     expandedHtmlBesidePetOk,
     avatarBesideInteractivePanelOk,
     vibeOk,

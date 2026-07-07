@@ -163,6 +163,7 @@ function accountToChatState(account = {}, remote = null, options = {}) {
     : { id: 'cloud-guest', name: '我', friendCode: '', status: 'offline' };
   const friends = (remote?.friends || account.friends || []).map(cloudUserToFriend).filter(friend => friend.id);
   const iceServers = remote?.iceServers || account.iceServers || [];
+  const messages = Array.isArray(remote?.messages) ? remote.messages : [];
   return {
     source: 'cloud',
     signedIn,
@@ -172,7 +173,7 @@ function accountToChatState(account = {}, remote = null, options = {}) {
     websocketUrl: signedIn ? cloudWebSocketUrl(account) : '',
     self,
     friends,
-    messages: [],
+    messages,
     activities: {},
     activityLog: [],
     iceServers,
@@ -238,6 +239,18 @@ async function addCloudFriend(friendCode, options = {}) {
   return getCloudMe(options);
 }
 
+async function sendCloudMessage(message = {}, options = {}) {
+  const account = readAccount(options);
+  if (!account.authToken) throw new Error('请先创建我的 ID');
+  const result = await requestJson(cloudApiUrl(account.baseUrl, '/api/messages'), {
+    fetchImpl: options.fetchImpl,
+    method: 'POST',
+    headers: authHeaders(account, { 'content-type': 'application/json' }),
+    body: JSON.stringify(message)
+  });
+  return result.message || result;
+}
+
 module.exports = {
   ACCOUNT_PATH,
   CLOUD_ACCOUNT_SCHEMA_VERSION,
@@ -252,5 +265,6 @@ module.exports = {
   normalizeCloudBaseUrl,
   readAccount,
   registerCloudUser,
-  saveAccount
+  saveAccount,
+  sendCloudMessage
 };

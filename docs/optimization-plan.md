@@ -701,8 +701,9 @@
 - 已继续执行阶段 5 的一部分：`optimization-plan` 作为 fast 自动 gate，会检查必需优化章节、验收状态段、空验收段、未完成验收项和本轮排除项；空验收段只返回 `emptyAcceptanceSections` 的章节编号；验收项中的“未完成”“部分完成”“待完成”“进行中”“尚未完成”“未达成”“未通过”都会被视为未达成，即使写在冒号、括号、破折号或空格后也会被识别，且检查输出只包含章节编号和行号，不回显计划正文。
 - 已继续执行阶段 5 的一部分：`error-log` 从人工复核升级为 fast 自动 gate，会检查 `docs/errorThing.md` 存在、跳过顶部 `## [时间]` 模板、校验全部真实记录字段完整、确认最新状态为已解决，并扫描是否存在未被后续同问题已解决记录关闭的开放未解决项；QA 已通过时的 Electron/Chromium GPU 退出噪声作为非阻断观察项处理，检查输出只返回行号、字段名和时间，不回显错误正文。
 - 已继续执行阶段 5 的一部分：`--run full` 新增 `screen-pipeline` gate，会在桌面渲染 QA 后执行 `npm run test:screen-pipeline`，用于发布前确认手动屏幕分析、结构化 LLM 输出和复盘 LLM 串联。
-- 已继续执行阶段 5 的一部分：`--run package` 的 macOS package 清单显式包含 `mac-notarization`，在本地打包、签名校验之外列出 `npm run notarize:mac && npm run verify:mac`，避免发布流程漏掉已有公证脚本，并在 staple 后再次执行 Gatekeeper/签名验证。
+- 已继续执行阶段 5 的一部分：`--run package` 的 macOS package 自动组对齐当前公开发布路径，只执行 `npm run release:mac` 生成 ad-hoc signed DMG/ZIP/manifest；`mac-package`、`mac-signing` 和 `mac-notarization` 仍保留在清单里作为人工步骤，Developer ID 签名和公证只用于后续 Apple-notarized build。
 - 已继续执行阶段 5 的一部分：普通公开下载改为使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；发布前清单保留 `mac-remote-client-release` 人工条件项，显式列出 `npm run release:mac:remote-client`，但该步骤只用于可选远端聊天/通话客户端，依赖部署后的 HTTPS `/client` 入口和 `REMOTE_CLIENT_URL`，不随 `--run package` 自动执行。`package:mac:remote-client` 可单独生成 `.app`。
+- 已继续执行阶段 5 的一部分：更新体验从“打开 GitHub Release 页面”升级为“宠物气泡和系统通知提醒，用户确认后直接下载并打开最新 DMG/ZIP”；应用仍不会静默替换自身，避免在 ad-hoc signed / 未公证包里制造不可控安装链路。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包的 `REMOTE_CLIENT_URL` 校验收紧为 HTTPS 且路径必须是 `/client` 或 `/client/...`，避免 `/client-...` 这类相似路径被误打包；校验函数已可导入测试。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包内的媒体权限校验从字符串前缀匹配改为解析请求 URL origin 后与 `REMOTE_CLIENT_URL` 精确同源比较，避免相似域名获得麦克风/摄像头权限。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包内的外链和导航边界已收紧，内嵌窗口只保留同源 `/client` 页面，跳出该范围的 http/https 导航交给系统浏览器，非 http/https 外链不会调用 `shell.openExternal()`。
