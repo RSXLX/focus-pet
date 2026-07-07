@@ -10,19 +10,36 @@ const sourceApp = path.join(root, 'node_modules', 'electron', 'dist', 'Electron.
 const distDir = path.join(root, 'dist');
 const outApp = path.join(distDir, `${appName}.app`);
 const resourcesApp = path.join(outApp, 'Contents', 'Resources', 'app');
+const APP_ICON_ICNS = path.join(root, 'src', 'assets', 'app-icon', 'icon.icns');
 
 function run(command, args) {
   execFileSync(command, args, { stdio: 'inherit' });
 }
 
+function setPlistValue(plist, key, value) {
+  try {
+    execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist], { stdio: 'ignore' });
+  } catch {
+    run('/usr/libexec/PlistBuddy', ['-c', `Add :${key} string ${value}`, plist]);
+  }
+}
+
 function copyProject() {
   fs.rmSync(resourcesApp, { recursive: true, force: true });
   fs.mkdirSync(resourcesApp, { recursive: true });
-  for (const entry of ['src', 'scripts', 'package.json', 'package-lock.json']) {
+  for (const entry of ['src']) {
     const from = path.join(root, entry);
     if (!fs.existsSync(from)) continue;
     fs.cpSync(from, path.join(resourcesApp, entry), { recursive: true });
   }
+  fs.writeFileSync(path.join(resourcesApp, 'package.json'), `${JSON.stringify({
+    name: packageJson.name,
+    version: packageJson.version,
+    description: packageJson.description,
+    main: packageJson.main,
+    license: packageJson.license,
+    dependencies: packageJson.dependencies || {}
+  }, null, 2)}\n`, 'utf8');
   const packagedModules = path.join(resourcesApp, 'node_modules');
   fs.mkdirSync(packagedModules, { recursive: true });
   for (const dependency of Object.keys(packageJson.dependencies || {})) {
@@ -36,16 +53,19 @@ function updatePlist() {
   const plist = path.join(outApp, 'Contents', 'Info.plist');
   const executable = path.join(outApp, 'Contents', 'MacOS', 'Electron');
   const renamedExecutable = path.join(outApp, 'Contents', 'MacOS', appName);
+  if (!fs.existsSync(APP_ICON_ICNS)) throw new Error(`应用图标不存在：${APP_ICON_ICNS}`);
+  fs.copyFileSync(APP_ICON_ICNS, path.join(outApp, 'Contents', 'Resources', 'icon.icns'));
   if (fs.existsSync(executable)) fs.renameSync(executable, renamedExecutable);
   for (const [key, value] of [
     ['CFBundleName', appName],
     ['CFBundleDisplayName', appName],
     ['CFBundleExecutable', appName],
     ['CFBundleIdentifier', process.env.BUNDLE_ID || 'dev.focus-pet.app'],
+    ['CFBundleIconFile', 'icon.icns'],
     ['CFBundleShortVersionString', packageJson.version],
     ['CFBundleVersion', packageJson.version]
   ]) {
-    run('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist]);
+    setPlistValue(plist, key, value);
   }
 }
 

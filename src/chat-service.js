@@ -55,6 +55,8 @@ const ALLOWED_FILE_EXTENSIONS = new Set([
 ]);
 const OWNER_ROLE = 'owner';
 const PEER_ROLE = 'peer';
+const OWNER_APP_MODE = 'owner';
+const PEER_APP_MODE = 'peer';
 const ACTIVITY_STATUSES = new Set(['work', 'study', 'rest', 'game', 'distracted', 'unknown']);
 const DEFAULT_RTC_ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 const REALTIME_EVENTS = new Set([
@@ -687,16 +689,7 @@ function sharedActivityForLevel(activity, shareLevel = 'presence') {
 
 function activitiesForAuth(state, auth, shareLevel = state.settings?.socialActivityShareLevel) {
   if (auth?.role === OWNER_ROLE) return normalizeActivities(state.activities || {});
-  const level = normalizeSocialActivityShareLevel(shareLevel);
-  if (level === 'presence') return {};
-  const ownerActivity = activityForPeer(state, state.self.id);
-  const ownActivity = activityForPeer(state, auth.peerId);
-  const sharedOwnerActivity = sharedActivityForLevel(ownerActivity, level);
-  const sharedOwnActivity = sharedActivityForLevel(ownActivity, level);
-  return {
-    ...(sharedOwnerActivity ? { [state.self.id]: sharedOwnerActivity } : {}),
-    ...(sharedOwnActivity ? { [auth.peerId]: sharedOwnActivity } : {})
-  };
+  return {};
 }
 
 function canSeeActivity(auth, activity, state) {
@@ -706,28 +699,13 @@ function canSeeActivity(auth, activity, state) {
 
 function messageForAuth(message, auth, state, shareLevel = state.settings?.socialActivityShareLevel) {
   if (auth?.role === OWNER_ROLE || !message?.activity) return message;
-  const scopedMessage = { ...message };
-  if (message.from === state.self.id || message.from === auth?.peerId) {
-    scopedMessage.activity = activityEventForAuth(message.activity, auth, state, shareLevel);
-  } else {
-    scopedMessage.activity = null;
-  }
-  return scopedMessage;
+  return { ...message, activity: null };
 }
 
 function activityLogForAuth(state, auth, limit = 160, shareLevel = state.settings?.socialActivityShareLevel) {
   const log = normalizeActivityLog(state.activityLog || []);
   if (auth?.role === OWNER_ROLE) return log.slice(-limit);
-  const level = normalizeSocialActivityShareLevel(shareLevel);
-  if (level === 'presence') return [];
-  if (level !== 'screen-summary') {
-    return [];
-  }
-  return log
-    .filter(activity => canSeeActivity(auth, activity, state))
-    .map(activity => sharedActivityForLevel(activity, level))
-    .filter(Boolean)
-    .slice(-limit);
+  return [];
 }
 
 function hasOnlineRecipient(peerId) {
@@ -928,6 +906,20 @@ function clientStateForAuth(auth, inputState = loadState(), options = {}) {
   };
   const base = {
     version: state.version || CHAT_STATE_VERSION,
+    appMode: auth?.role === PEER_ROLE ? PEER_APP_MODE : OWNER_APP_MODE,
+    capabilities: auth?.role === PEER_ROLE
+      ? {
+          role: PEER_APP_MODE,
+          receivesActivitySnapshots: false,
+          canPublishOwnActivity: true,
+          canUseChatAndCalls: true
+        }
+      : {
+          role: OWNER_APP_MODE,
+          receivesRemoteActivitySnapshots: true,
+          canViewFullActivitySnapshots: true,
+          canUseChatAndCalls: true
+        },
     tokenHint: tokenHash(auth?.token || state.authToken),
     settings,
     activities: activitiesForAuth(state, auth, socialActivityShareLevel),
@@ -1175,14 +1167,13 @@ function broadcastMessage(message) {
 
 function shouldReceiveActivity(client, activity, state = loadState()) {
   if (client.auth?.role === OWNER_ROLE) return true;
-  return activity.from === state.self.id || activity.from === client.peerId;
+  return false;
 }
 
 function activityEventForAuth(activity, auth, state = loadState(), shareLevel = state.settings?.socialActivityShareLevel) {
   if (!activity || typeof activity !== 'object' || !auth) return null;
   if (auth.role === OWNER_ROLE) return activity;
-  if (activity.from !== state.self.id && activity.from !== auth.peerId) return null;
-  return sharedActivityForLevel(activity, shareLevel);
+  return null;
 }
 
 function broadcastActivity(activity) {
@@ -1696,7 +1687,7 @@ function remoteClientHtml() {
 </head>
 <body>
 <section id="joinPanel" class="join hidden"><div class="join-box"><h1>加入 Focus Pet 聊天</h1><input id="joinName" maxlength="40" placeholder="你的昵称"><input id="joinInvite" maxlength="20" placeholder="邀请码"><button id="joinButton">加入聊天</button><p id="joinStatus" class="status">需要桌面端提供的邀请码。</p></div></section>
-<div class="app"><span id="status" class="status">连接中</span><div class="grid"><aside class="sidebar"><h2>好友</h2><div id="friends"></div></aside><main class="chat"><div class="row"><select id="friendSelect" aria-label="好友"></select></div><section id="activity" class="activity hidden"><img id="activityImage" alt="对方屏幕活动截图"><div><strong id="activityTitle">对方正在做什么</strong><span id="activityText">等待对方共享屏幕分析。</span><small id="activityMeta">暂无同步</small></div><ol id="activityLog"></ol></section><div id="messages" class="messages"></div><div class="compose"><input id="textMessage" maxlength="4000" placeholder="输入消息"><button id="sendText">发送</button></div><div class="actions"><input id="file" type="file" accept="${CHAT_FILE_ACCEPT}" hidden><button id="pickImage">图片</button><button id="pickFile">文件</button><button id="voice">语音消息</button></div><div class="calls"><button id="callAudio">语音电话</button><button id="callVideo">视频电话</button><button id="callEnd">挂断</button></div><div id="rtcNotice" class="rtc-notice hidden"><span>WebRTC 通话可能向通话对方暴露网络地址；仅与可信联系人通话。</span><button id="rtcContinue">继续通话</button><button id="rtcCancel">取消</button></div><div class="call-stage"><video id="localVideo" muted autoplay playsinline></video><video id="remoteVideo" autoplay playsinline></video></div><p id="callStatus" class="status">未通话</p></main></div></div>
+<div class="app"><span id="status" class="status">连接中</span><div class="grid"><aside class="sidebar"><h2>好友</h2><div id="friends"></div></aside><main class="chat"><div class="row"><select id="friendSelect" aria-label="好友"></select></div><div id="messages" class="messages"></div><div class="compose"><input id="textMessage" maxlength="4000" placeholder="输入消息"><button id="sendText">发送</button></div><div class="actions"><input id="file" type="file" accept="${CHAT_FILE_ACCEPT}" hidden><button id="pickImage">图片</button><button id="pickFile">文件</button><button id="voice">语音消息</button></div><div class="calls"><button id="callAudio">语音电话</button><button id="callVideo">视频电话</button><button id="callEnd">挂断</button></div><div id="rtcNotice" class="rtc-notice hidden"><span>WebRTC 通话可能向通话对方暴露网络地址；仅与可信联系人通话。</span><button id="rtcContinue">继续通话</button><button id="rtcCancel">取消</button></div><div class="call-stage"><video id="localVideo" muted autoplay playsinline></video><video id="remoteVideo" autoplay playsinline></video></div><p id="callStatus" class="status">未通话</p></main></div></div>
 <script>
 const params=new URLSearchParams(location.search);const FILE_ACCEPT=${JSON.stringify(CHAT_FILE_ACCEPT)};const RTC_NOTICE_KEY='focusPetRtcNetworkNoticeAccepted:v1';const DEVICE_ID_KEY='focusPetChatDeviceId';let token=params.get('token')||localStorage.getItem('focusPetChatToken')||'';let state={self:{id:'',name:''},friends:[],messages:[],activities:{},activityLog:[],port:${port},iceServers:${JSON.stringify(DEFAULT_RTC_ICE_SERVERS)}};let ws;let pingTimer;let recorder;let chunks=[];let mediaMode='image';let pc;let localStream;let localMediaPromise;let localMediaRequestMode='';let currentCall=null;let pendingRtcAction=null;
 const el=id=>document.getElementById(id);function ensureDeviceId(){let deviceId=localStorage.getItem(DEVICE_ID_KEY)||'';if(!deviceId){deviceId='device-'+Date.now()+'-'+Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2);localStorage.setItem(DEVICE_ID_KEY,deviceId)}return deviceId}const authHeaders=()=>token?{authorization:'Bearer '+token,'x-focus-pet-device-id':ensureDeviceId()}:{};
@@ -1719,7 +1710,7 @@ function fileSize(size){const bytes=Number(size)||0;if(bytes<1024)return bytes+'
 function appendFile(node,m){const a=document.createElement('a');a.className='file-card';a.href=mediaSrc(m.media);a.target='_blank';a.rel='noreferrer';a.download=m.media?.name||m.text||'';const badge=document.createElement('b');badge.textContent=fileKind(m.media);const copy=document.createElement('span');const name=document.createElement('i');name.textContent=m.media?.name||m.text||'未命名文件';const meta=document.createElement('small');meta.textContent=fileKind(m.media)+' · '+fileSize(m.media?.size);copy.append(name,meta);a.append(badge,copy);node.appendChild(a)}
 function activityStatus(status){return status==='work'?'专注中':status==='study'?'学习中':status==='rest'?'休息中':status==='game'?'游戏中':status==='distracted'?'可能偏离':'观察中'}
 function activityTime(time){const value=Date.parse(time);if(!Number.isFinite(value))return'刚刚同步';const seconds=Math.max(0,Math.round((Date.now()-value)/1000));if(seconds<60)return'刚刚同步';if(seconds<3600)return Math.round(seconds/60)+'分钟前同步';return new Date(value).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}
-function renderActivity(){const log=(state.activityLog||[]).filter(item=>item.from===selectedPeer());const activity=state.activities?.[selectedPeer()]||log.at(-1);const box=el('activity');if(!activity){box.classList.add('hidden');return}box.classList.remove('hidden');el('activityTitle').textContent=(state.friends.find(f=>f.id===activity.from)?.name||'对方')+' · '+activityStatus(activity.status);el('activityText').textContent=activity.review?.insight||activity.message||activity.activity||'等待下一次屏幕分析。';const confidence=Math.round((Number(activity.confidence)||0)*100);el('activityMeta').textContent=[activityTime(activity.time),confidence?confidence+'%':''].filter(Boolean).join(' · ');const image=el('activityImage');image.hidden=true;image.removeAttribute('src');const list=el('activityLog');list.innerHTML='';for(const item of log.slice(-8).reverse()){const row=document.createElement('li');const time=document.createElement('b');const text=document.createElement('span');const status=document.createElement('em');time.textContent=activityTime(item.time);text.textContent=item.activity||item.message||'屏幕采样';status.textContent=activityStatus(item.status);row.title=[item.reason,item.suggestion].filter(Boolean).join(' · ');row.append(time,text,status);list.appendChild(row)}}
+function renderActivity(){const box=el('activity');if(!box)return;box.classList.add('hidden')}
 function appendBody(node,m){if(m.activity){const span=document.createElement('span');span.textContent=m.activity.message||m.text||m.activity.activity||'[屏幕分析]';node.appendChild(span);return}const mediaType=m.media?.url?attachmentTypeForFile({type:m.media.mimeType},m.type):'';if(m.media?.url&&mediaType==='image'){const img=document.createElement('img');img.src=mediaSrc(m.media);img.alt=m.media.name||'image';node.appendChild(img);return}if(m.media?.url&&mediaType==='video'){const video=document.createElement('video');video.src=mediaSrc(m.media);video.controls=true;node.appendChild(video);return}if(m.media?.url&&mediaType==='voice'){const audio=document.createElement('audio');audio.src=mediaSrc(m.media);audio.controls=true;node.appendChild(audio);return}if(m.media?.url){appendFile(node,m);return}const span=document.createElement('span');span.textContent=m.text||'['+m.type+']';node.appendChild(span)}
 function renderMessages(){el('messages').innerHTML='';for(const m of state.messages.slice(-120)){const d=document.createElement('div');d.className='msg '+(m.from===state.self.id?'mine':'');d.title=m.from===state.self.id?'我':m.from;appendBody(d,m);el('messages').appendChild(d)}el('messages').scrollTop=el('messages').scrollHeight}
 function syncMessage(message){const i=state.messages.findIndex(item=>(message.id&&item.id===message.id)||(message.clientId&&item.clientId===message.clientId));if(i>=0)state.messages[i]={...state.messages[i],...message};else state.messages.push(message);renderMessages()}

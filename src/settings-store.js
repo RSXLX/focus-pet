@@ -1,8 +1,17 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { readJsonWithRecovery, writeJsonAtomic } = require('./json-storage');
-const { normalizeLlmCloudMode, normalizeLlmProvider } = require('./llm-provider');
+const {
+  DEFAULT_SCREEN_CHECK_CLOUD_URL,
+  DEFAULT_STEPFUN_ENDPOINT,
+  DEFAULT_STEPFUN_SCREEN_MODEL,
+  normalizeLlmCloudMode,
+  normalizeLlmProvider,
+  normalizeScreenCheckCloudUrl
+} = require('./llm-provider');
+const { DEFAULT_UPDATE_FEED_URL, normalizeUpdateFeedUrl } = require('./update-service');
 
 const DATA_DIR = path.join(os.homedir(), '.hermes', 'focus-watchdog');
 const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
@@ -11,6 +20,7 @@ const DEFAULT_REVIEW_LLM_ENDPOINT = 'https://api.stepfun.com/step_plan/v1';
 const DEFAULT_REVIEW_LLM_MODEL = 'step-3.7-flash';
 const DEFAULT_VOICE_RECORD_SHORTCUT = 'Alt+R';
 const SOCIAL_ACTIVITY_SHARE_LEVELS = new Set(['presence', 'status', 'summary', 'screen-summary']);
+const SCREEN_CHECK_TRANSPORTS = new Set(['auto', 'cloud', 'direct']);
 
 const DEFAULT_SETTINGS = {
   popupCooldownMinutes: 8,
@@ -20,16 +30,19 @@ const DEFAULT_SETTINGS = {
   maxMediaMb: 25,
   petBehaviorIntensity: 'normal',
   launchAtLogin: false,
-  autoCheckUpdates: false,
-  updateFeedUrl: '',
+  autoCheckUpdates: true,
+  updateFeedUrl: DEFAULT_UPDATE_FEED_URL,
   llmCloudMode: 'allowed',
-  screenMonitorProvider: 'openai-compatible',
+  screenMonitorProvider: 'stepfun',
   screenMonitorEnabled: false,
   screenMonitorIntervalSeconds: 45,
-  screenMonitorEndpoint: '',
-  screenMonitorModel: '',
+  screenMonitorEndpoint: DEFAULT_STEPFUN_ENDPOINT,
+  screenMonitorModel: DEFAULT_STEPFUN_SCREEN_MODEL,
+  screenCheckTransport: 'auto',
+  screenCheckCloudUrl: DEFAULT_SCREEN_CHECK_CLOUD_URL,
+  screenCheckDeviceId: '',
   reviewLlmProvider: 'openai-compatible',
-  reviewLlmEnabled: true,
+  reviewLlmEnabled: false,
   reviewLlmEndpoint: DEFAULT_REVIEW_LLM_ENDPOINT,
   reviewLlmModel: DEFAULT_REVIEW_LLM_MODEL,
   voiceRecordShortcut: DEFAULT_VOICE_RECORD_SHORTCUT,
@@ -117,8 +130,39 @@ function normalizeSocialActivityShareLevel(value) {
   return SOCIAL_ACTIVITY_SHARE_LEVELS.has(level) ? level : DEFAULT_SETTINGS.socialActivityShareLevel;
 }
 
+function normalizeScreenCheckTransport(value) {
+  const transport = String(value || '').trim();
+  return SCREEN_CHECK_TRANSPORTS.has(transport) ? transport : DEFAULT_SETTINGS.screenCheckTransport;
+}
+
+function makeScreenCheckDeviceId() {
+  return `screen-${randomUUID().replaceAll('-', '').slice(0, 24)}`;
+}
+
+function normalizeScreenCheckDeviceId(value) {
+  const deviceId = String(value || '').trim();
+  return /^[A-Za-z0-9._:-]{8,120}$/.test(deviceId) ? deviceId : makeScreenCheckDeviceId();
+}
+
+function isLegacyEmptyScreenCheckConfig(input = {}) {
+  return input.screenMonitorProvider === 'openai-compatible'
+    && !String(input.screenMonitorEndpoint || '').trim()
+    && !String(input.screenMonitorModel || '').trim();
+}
+
+function stripTrailingSlashes(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function isHalfMigratedStepFunScreenCheckConfig(input = {}) {
+  return input.screenMonitorProvider === 'openai-compatible'
+    && stripTrailingSlashes(input.screenMonitorEndpoint) === DEFAULT_STEPFUN_ENDPOINT
+    && String(input.screenMonitorModel || '').trim() === DEFAULT_STEPFUN_SCREEN_MODEL;
+}
+
 function normalizeSettings(input = {}) {
   const settings = { ...DEFAULT_SETTINGS, ...input };
+  const upgradeLegacyScreenCheck = isLegacyEmptyScreenCheckConfig(input) || isHalfMigratedStepFunScreenCheckConfig(input);
   return {
     popupCooldownMinutes: clampNumber(settings.popupCooldownMinutes, 1, 120, DEFAULT_SETTINGS.popupCooldownMinutes),
     idleNudgeMinutes: clampNumber(settings.idleNudgeMinutes, 1, 60, DEFAULT_SETTINGS.idleNudgeMinutes),
@@ -128,13 +172,16 @@ function normalizeSettings(input = {}) {
     petBehaviorIntensity: ['calm', 'normal', 'active'].includes(settings.petBehaviorIntensity) ? settings.petBehaviorIntensity : DEFAULT_SETTINGS.petBehaviorIntensity,
     launchAtLogin: Boolean(settings.launchAtLogin),
     autoCheckUpdates: Boolean(settings.autoCheckUpdates),
-    updateFeedUrl: /^https?:\/\//.test(String(settings.updateFeedUrl || '').trim()) ? String(settings.updateFeedUrl).trim() : '',
+    updateFeedUrl: normalizeUpdateFeedUrl(settings.updateFeedUrl),
     llmCloudMode: normalizeLlmCloudMode(settings.llmCloudMode),
-    screenMonitorProvider: normalizeLlmProvider(settings.screenMonitorProvider),
+    screenMonitorProvider: upgradeLegacyScreenCheck ? DEFAULT_SETTINGS.screenMonitorProvider : normalizeLlmProvider(settings.screenMonitorProvider),
     screenMonitorEnabled: Boolean(settings.screenMonitorEnabled),
     screenMonitorIntervalSeconds: clampNumber(settings.screenMonitorIntervalSeconds, 15, 300, DEFAULT_SETTINGS.screenMonitorIntervalSeconds),
-    screenMonitorEndpoint: cleanEndpoint(settings.screenMonitorEndpoint),
-    screenMonitorModel: String(settings.screenMonitorModel || '').trim().slice(0, 120),
+    screenMonitorEndpoint: upgradeLegacyScreenCheck ? DEFAULT_SETTINGS.screenMonitorEndpoint : cleanEndpoint(settings.screenMonitorEndpoint),
+    screenMonitorModel: upgradeLegacyScreenCheck ? DEFAULT_SETTINGS.screenMonitorModel : String(settings.screenMonitorModel || '').trim().slice(0, 120),
+    screenCheckTransport: normalizeScreenCheckTransport(settings.screenCheckTransport),
+    screenCheckCloudUrl: normalizeScreenCheckCloudUrl(settings.screenCheckCloudUrl),
+    screenCheckDeviceId: normalizeScreenCheckDeviceId(settings.screenCheckDeviceId),
     reviewLlmProvider: normalizeLlmProvider(settings.reviewLlmProvider),
     reviewLlmEnabled: settings.reviewLlmEnabled !== false,
     reviewLlmEndpoint: cleanEndpoint(settings.reviewLlmEndpoint, DEFAULT_SETTINGS.reviewLlmEndpoint),

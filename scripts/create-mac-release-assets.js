@@ -10,6 +10,15 @@ function run(command, args, options = {}) {
   execFileSync(command, args, { stdio: 'inherit', ...options });
 }
 
+function resolvePackageScript(root, scriptName) {
+  const packageJson = require(path.join(root, 'package.json'));
+  const command = packageJson.scripts?.[scriptName];
+  if (typeof command !== 'string') throw new Error(`package.json 缺少脚本：${scriptName}`);
+  const match = command.trim().match(/^node\s+([^\s]+\.js)$/);
+  if (!match) throw new Error(`mac release 只支持 node 脚本打包命令：${scriptName}`);
+  return path.join(root, match[1]);
+}
+
 function filePart(value) {
   return String(value || '')
     .trim()
@@ -125,7 +134,8 @@ function createMacReleaseAssets(options = {}) {
   });
   fs.rmSync(plan.releaseDir, { recursive: true, force: true });
   fs.mkdirSync(plan.releaseDir, { recursive: true });
-  run(process.execPath, [path.join(PROJECT_ROOT, 'scripts', 'package-macos.js')]);
+  const packageScript = options.packageScript || process.env.FOCUS_PET_MAC_PACKAGE_SCRIPT || 'package:mac';
+  run(process.execPath, [resolvePackageScript(PROJECT_ROOT, packageScript)]);
   if (!fs.existsSync(plan.appPath)) throw new Error(`App bundle 不存在：${plan.appPath}`);
   plan.signing = signAppForRelease(plan);
   createZip(plan);
@@ -150,5 +160,6 @@ if (require.main === module) {
 module.exports = {
   buildReleaseAssetPlan,
   createMacReleaseAssets,
-  filePart
+  filePart,
+  resolvePackageScript
 };

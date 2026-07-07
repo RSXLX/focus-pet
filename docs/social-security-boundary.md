@@ -108,32 +108,22 @@ FOCUS_PET_CHAT_ALLOWED_ORIGINS="https://chat.example.com,https://app.example.com
 - 媒体 ID 只取 basename 后映射到 `media/` 目录。
 - 媒体 URL 可带 `token` 查询参数，供浏览器图片、音频和视频标签读取。
 
-## 8. 社交活动共享权限
+## 8. Owner / Peer 活动边界
 
-社交活动共享由设置项 `socialActivityShareLevel` 控制，默认值为 `presence`。
+Focus Pet 的公开分发边界按 owner / peer 两端模型执行：
 
-当前档位：
+- Owner：本机账户，可以查看自己选择保留的完整活动快照、屏幕分析摘要、截图媒体引用和本机复盘数据。
+- Peer：远端好友客户端，只用于加入会话、文字/媒体消息、语音消息和 WebRTC 语音/视频；不接收任何对方活动快照、截图分析摘要或活动历史。
 
-- `presence`：只共享在线状态。Peer 的 `activities` 与 `activityLog` 为空，即使服务端已有该 peer 自己的活动记录也不下发；WebSocket 不向 peer 推送 owner 活动事件。
-- `status`：共享当前状态枚举和通用状态文案，例如专注中、学习中、休息中、游戏中、可能偏离。
-- `summary`：共享当前活动摘要、建议和置信度，不共享历史。
-- `screen-summary`：共享屏幕分析摘要、原因、建议、复盘 insight 和最近摘要历史。
+服务端强制执行该边界，不依赖前端隐藏字段：
 
-字段边界：
-
-- Owner 本机视图保留完整活动快照。
-- Peer 端不接收当前任务 `currentTask`。
-- Peer 端不接收前台 App 或窗口标题 `frontmost`。
-- Peer 端不接收截图或活动媒体 `media`。
-- Peer 端不接收内部采集源名称 `sourceName`。
-- Peer 端 `summary` 和 `screen-summary` 的 `message` 只由允许共享的活动摘要 `activity` 生成，不使用内部活动快照的自定义 `message`。
-- Peer 端 `screen-summary` 只接收 `review.insight`，不接收复盘 `summary`、`petMessage`、`tone`、`status` 或 `ok`。
-- 桌面端和远端社交端的 peer 活动视图也只消费共享契约字段，不渲染 `currentTask`、`frontmost` 或 `media`。
-- 聊天消息中的结构化 `messages[*].activity` 也按同一共享级别降级，不能绕过 `activities` 或 `activityLog` 的出站过滤；peer 自己发送的 activity 消息返回给该 peer 时也不保留完整活动字段。
-- 当 owner 尚无活动快照时，非 `presence` 共享档位也返回空活动状态，不生成占位活动或服务端错误。
-- Peer 自身活动如果出现在服务端状态中，也会走同一共享契约降级；`status` 和 `summary` 不返回活动历史，`screen-summary` 只返回已降级摘要历史。
-- Peer 端不接收其他 peer 的活动。
-- 活动快照通过 `/api/state` 和 WebSocket `activity` 事件出站前统一降级；WebSocket 广播复用同一 peer 出站契约，`presence` 不发送 activity 事件，非 `presence` 也不会把 peer 自身完整活动作为快捷分支直接发送。
+- peer 调用 `/api/state` 时，`activities` 恒为空对象，`activityLog` 恒为空数组。
+- peer 接收 WebSocket 时，不发送 `activity` 事件。
+- peer 的 `messages[*].activity` 恒为 `null`，避免通过消息列表绕过活动边界。
+- peer 即使自己提交活动快照，也不会从服务端回读活动结果；该结果只进入 owner 本机视图。
+- owner 调用本机状态接口或 WebSocket 时，仍保留完整活动数据，用于本机监督、复盘和诊断。
+- 可选远端聊天/通话客户端不渲染“对方正在做什么”或截图分析面板。
+- 普通公开下载使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；远端聊天/通话客户端只作为可选包，通过 `npm run release:mac:remote-client` 单独构建。
 
 本文档不引入隐私模式、敏感 App 列表、窗口标题脱敏或用户纠错机制。
 

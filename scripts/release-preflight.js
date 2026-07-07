@@ -59,6 +59,7 @@ const ERROR_LOG_FIELDS = [
 const DEFAULT_PREFLIGHT_DIAGNOSTICS_DIR = path.join('output', 'diagnostics', 'preflight');
 const DIAGNOSTICS_BUNDLE_REQUIRED_FILES = ['manifest.md', 'summary.json'];
 const DIAGNOSTICS_BUNDLE_NAME_PATTERN = /^focus-pet-diagnostics-\d{8}-\d{6}$/;
+const DEFAULT_FOCUS_PET_CLOUD_BASE_URL = 'https://reecewong520--focus-pet-cloud-cloud.modal.run';
 const DIAGNOSTICS_SUMMARY_REQUIRED_TOP_LEVEL_KEYS = [
   'schemaVersion',
   'version',
@@ -102,6 +103,7 @@ const OPTIMIZATION_PLAN_SECTIONS = [
 ];
 const INCOMPLETE_ACCEPTANCE_STATUS_PATTERN = /(?:[：:\-—–（(]\s*|\s)(?:未完成|部分完成|待完成|进行中|尚未完成|未达成|未通过)(?:[。；;，,）)\s]|$)/;
 const PACKAGE_SCRIPT_REQUIREMENTS = [
+  { script: 'icons:generate', command: 'node scripts/generate-app-icons.js', file: 'scripts/generate-app-icons.js' },
   { script: 'package:mac', command: 'node scripts/package-macos.js', file: 'scripts/package-macos.js' },
   { script: 'package:win', command: 'node scripts/package-windows.js', file: 'scripts/package-windows.js' },
   { script: 'package:mac:remote-client', command: 'node scripts/package-remote-client-macos.js', file: 'scripts/package-remote-client-macos.js' },
@@ -156,6 +158,19 @@ function readTextIfExists(filePath) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeCloudHealthUrl(value = process.env.FOCUS_PET_CLOUD_HEALTH_URL || process.env.FOCUS_PET_CLOUD_PUBLIC_URL || DEFAULT_FOCUS_PET_CLOUD_BASE_URL) {
+  const raw = String(value || DEFAULT_FOCUS_PET_CLOUD_BASE_URL).trim().replace(/\/+$/, '');
+  try {
+    const url = new URL(raw);
+    url.pathname = '/healthz';
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return `${DEFAULT_FOCUS_PET_CLOUD_BASE_URL}/healthz`;
+  }
 }
 
 function listPublicStateVariableNames(text = '') {
@@ -1118,6 +1133,41 @@ function runChatBackendDeployCheck(projectRoot = path.resolve(__dirname, '..')) 
   };
 }
 
+function readCloudHealth(url) {
+  const result = spawnSync('curl', ['-fsS', '--max-time', '20', url], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      error: (result.stderr || result.stdout || `curl exited ${result.status}`).trim()
+    };
+  }
+  try {
+    return { ok: true, health: JSON.parse(result.stdout) };
+  } catch (error) {
+    return { ok: false, error: `invalid health JSON: ${error.message}` };
+  }
+}
+
+function runCloudHealthCheck(options = {}) {
+  const url = normalizeCloudHealthUrl(options.url);
+  const readResult = options.health ? { ok: true, health: options.health } : readCloudHealth(url);
+  const health = readResult.health || {};
+  const failures = [];
+  if (!readResult.ok) failures.push('health-unreachable');
+  if (health.ok !== true) failures.push('cloud-not-ok');
+  if (health.screenCheck?.enabled !== true) failures.push('screen-check-disabled');
+  if (health.rtc && health.rtc.configValid === false) failures.push('turn-config-invalid');
+  if (health.rtc?.hasTurn !== true) failures.push('turn-missing');
+  return {
+    ok: failures.length === 0,
+    url,
+    failures,
+    rtc: health.rtc || null,
+    screenCheck: health.screenCheck || null,
+    error: readResult.error || ''
+  };
+}
+
 function buildReleasePreflightChecklist(options = {}) {
   const platform = options.platform || process.platform;
   return [
@@ -1194,23 +1244,49 @@ function buildReleasePreflightChecklist(options = {}) {
       note: '确认 Dockerfile、chat:serve、健康检查、持久化数据目录和 SIGTERM 关闭入口可用于容器部署。'
     },
     {
+      id: 'cloud-health',
+      title: 'Focus Pet Cloud 生产健康检查',
+      command: 'node scripts/release-preflight.js --check cloud-health',
+      runGroup: 'full',
+      required: true,
+      note: '发布前确认 /healthz ok=true、screenCheck.enabled=true 且 rtc.hasTurn=true。'
+    },
+    {
+      id: 'cloud-live-smoke',
+      title: 'Focus Pet Cloud 线上闭环 Smoke Test',
+      command: 'npm run cloud:smoke',
+      manual: true,
+      required: true,
+      note: '显式执行：注册两个临时生产 Cloud 用户、互加好友、连接 WSS、转发一次通话邀请，并可选调用 /api/screen-check。'
+    },
+    {
       id: 'mac-package',
       title: 'macOS 本地打包',
       command: 'npm run package:mac',
       runGroup: 'package',
       platform: 'darwin',
-      required: platform === 'darwin',
-      note: 'macOS 发布前生成本机 app 产物。'
+      manual: true,
+      required: false,
+      note: '仅需 .app 调试包时执行；公开下载默认使用 macOS Release 资产步骤。'
     },
     {
-      id: 'mac-remote-client-package',
-      title: 'macOS 远端客户端打包',
-      command: 'npm run package:mac:remote-client',
+      id: 'mac-release-assets',
+      title: 'macOS Release 资产',
+      command: 'npm run release:mac',
+      runGroup: 'package',
+      platform: 'darwin',
+      required: platform === 'darwin',
+      note: '当前公开发布路径：生成 ad-hoc signed DMG、ZIP 和 SHA-256 manifest。'
+    },
+    {
+      id: 'mac-remote-client-release',
+      title: 'macOS 轻量通话客户端发布资产',
+      command: 'npm run release:mac:remote-client',
       runGroup: 'package',
       platform: 'darwin',
       manual: true,
       required: false,
-      note: '部署 HTTPS 远端客户端后设置 REMOTE_CLIENT_URL 再执行；条件项，不随 package 自动组运行。'
+      note: '部署 HTTPS /client 入口后设置 REMOTE_CLIENT_URL 再执行，生成 DMG/ZIP/manifest；条件项，不随 package 自动组运行。'
     },
     {
       id: 'mac-signing',
@@ -1218,8 +1294,9 @@ function buildReleasePreflightChecklist(options = {}) {
       command: 'npm run sign:mac && npm run verify:mac',
       runGroup: 'package',
       platform: 'darwin',
-      required: platform === 'darwin',
-      note: '发布签名环境准备好后执行。'
+      manual: true,
+      required: false,
+      note: '仅发布 Apple Developer ID 包时执行；ad-hoc signed Release 不跑 verify:mac。'
     },
     {
       id: 'mac-notarization',
@@ -1227,8 +1304,9 @@ function buildReleasePreflightChecklist(options = {}) {
       command: 'npm run notarize:mac && npm run verify:mac',
       runGroup: 'package',
       platform: 'darwin',
-      required: platform === 'darwin',
-      note: 'Apple ID、Team ID 和 App 专用密码准备好后执行，并在 staple 后再次验证。'
+      manual: true,
+      required: false,
+      note: '仅发布 Apple-notarized build 时执行，并在 staple 后再次验证。'
     },
     {
       id: 'windows-package',
@@ -1358,6 +1436,7 @@ function main(argv = process.argv.slice(2)) {
       'optimization-plan': runOptimizationPlanCheck,
       'package-scripts': runPackageScriptsCheck,
       'chat-backend-deploy': runChatBackendDeployCheck,
+      'cloud-health': runCloudHealthCheck,
       'error-log': runErrorLogCheck
     };
     if (!checks[options.check]) {
@@ -1397,6 +1476,7 @@ module.exports = {
   runDiagnosticsBundleOutputCheck,
   runDiagnosticsSummaryOutputCheck,
   runDocsBoundaryCheck,
+  runCloudHealthCheck,
   runErrorLogCheck,
   runChatBackendDeployCheck,
   runOptimizationPlanCheck,

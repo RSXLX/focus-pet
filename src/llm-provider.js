@@ -1,8 +1,13 @@
-const LLM_PROVIDERS = ['openai-compatible', 'ollama', 'local-openai-compatible'];
+const LLM_PROVIDERS = ['stepfun', 'openai-compatible', 'ollama', 'local-openai-compatible'];
 const LLM_CLOUD_MODES = ['allowed', 'local-only'];
 const DEFAULT_PROVIDER = 'openai-compatible';
 const DEFAULT_CLOUD_MODE = 'allowed';
 const OLLAMA_CHAT_ENDPOINT = 'http://127.0.0.1:11434/v1/chat/completions';
+const DEFAULT_STEPFUN_ENDPOINT = 'https://api.stepfun.com/v1';
+const DEFAULT_STEPFUN_CHAT_ENDPOINT = `${DEFAULT_STEPFUN_ENDPOINT}/chat/completions`;
+const DEFAULT_STEPFUN_SCREEN_MODEL = 'step-3.7-flash';
+const DEFAULT_FOCUS_PET_CLOUD_BASE_URL = 'https://reecewong520--focus-pet-cloud-cloud.modal.run';
+const DEFAULT_SCREEN_CHECK_CLOUD_URL = `${DEFAULT_FOCUS_PET_CLOUD_BASE_URL}/api/screen-check`;
 
 function cleanText(value, maxLength = 160) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
@@ -34,9 +39,20 @@ function isLocalEndpoint(value) {
 
 function normalizeChatEndpoint(value, { provider = DEFAULT_PROVIDER, fallback = '' } = {}) {
   const normalizedProvider = normalizeLlmProvider(provider);
-  const raw = stripTrailingSlashes(value || (normalizedProvider === 'ollama' ? OLLAMA_CHAT_ENDPOINT : fallback));
+  const providerFallback = normalizedProvider === 'ollama'
+    ? OLLAMA_CHAT_ENDPOINT
+    : (normalizedProvider === 'stepfun' ? DEFAULT_STEPFUN_ENDPOINT : fallback);
+  const raw = stripTrailingSlashes(value || providerFallback);
   if (!/^https?:\/\//i.test(raw)) return '';
   if (/\/chat\/completions$/i.test(raw)) return raw;
+  if (normalizedProvider === 'stepfun') {
+    try {
+      const url = new URL(raw);
+      if (url.hostname.toLowerCase() === 'api.stepfun.com' && (!url.pathname || url.pathname === '/')) {
+        return DEFAULT_STEPFUN_CHAT_ENDPOINT;
+      }
+    } catch {}
+  }
   if (normalizedProvider === 'ollama') {
     if (/\/api\/chat$/i.test(raw)) return raw.replace(/\/api\/chat$/i, '/v1/chat/completions');
     if (/\/v1$/i.test(raw)) return `${raw}/chat/completions`;
@@ -44,6 +60,30 @@ function normalizeChatEndpoint(value, { provider = DEFAULT_PROVIDER, fallback = 
   }
   if (/\/v1$/i.test(raw)) return `${raw}/chat/completions`;
   return `${raw}/chat/completions`;
+}
+
+function normalizeScreenCheckCloudUrl(value, { fallback = '' } = {}) {
+  const raw = stripTrailingSlashes(value || fallback);
+  if (!/^https?:\/\//i.test(raw)) return '';
+  try {
+    const url = new URL(raw);
+    const pathname = url.pathname.replace(/\/+$/, '');
+    if (!pathname || pathname === '/') {
+      url.pathname = '/api/screen-check';
+      url.search = '';
+      url.hash = '';
+      return url.toString();
+    }
+    if (pathname === '/client' || pathname.startsWith('/client/')) {
+      url.pathname = '/api/screen-check';
+      url.search = '';
+      url.hash = '';
+      return url.toString();
+    }
+    return raw;
+  } catch {
+    return '';
+  }
 }
 
 function isLocalProvider(provider, endpoint = '') {
@@ -87,7 +127,12 @@ function providerSummary({ provider = DEFAULT_PROVIDER, endpoint = '', cloudMode
 
 module.exports = {
   DEFAULT_CLOUD_MODE,
+  DEFAULT_FOCUS_PET_CLOUD_BASE_URL,
   DEFAULT_PROVIDER,
+  DEFAULT_SCREEN_CHECK_CLOUD_URL,
+  DEFAULT_STEPFUN_CHAT_ENDPOINT,
+  DEFAULT_STEPFUN_ENDPOINT,
+  DEFAULT_STEPFUN_SCREEN_MODEL,
   LLM_CLOUD_MODES,
   LLM_PROVIDERS,
   OLLAMA_CHAT_ENDPOINT,
@@ -99,5 +144,6 @@ module.exports = {
   normalizeChatEndpoint,
   normalizeLlmCloudMode,
   normalizeLlmProvider,
+  normalizeScreenCheckCloudUrl,
   providerSummary
 };

@@ -43,7 +43,7 @@ function platformSettingsProfile(platform = process.platform) {
       screenRecordingButtonLabel: '屏幕权限',
       screenRecordingSettingsAvailable: false,
       permissionHelpText: 'Windows 版会用系统前台窗口标题判断专注状态；如果被安全策略拦截，请在 Windows 隐私或安全设置中允许 Focus Pet / PowerShell。',
-      screenMonitorHelpText: 'Windows 版屏幕监控通过 Electron 截屏能力工作，没有单独的“屏幕录制”设置入口。',
+      screenMonitorHelpText: 'Windows 版屏幕检查通过 Electron 截屏能力工作，没有单独的“屏幕录制”设置入口。',
       permissionGuideTitle: '权限引导',
       permissionGuideSteps: [
         {
@@ -64,7 +64,7 @@ function platformSettingsProfile(platform = process.platform) {
       screenRecordingButtonLabel: '屏幕权限',
       screenRecordingSettingsAvailable: true,
       permissionHelpText: 'macOS 需要辅助功能权限读取当前 App 和窗口标题。',
-      screenMonitorHelpText: '开启屏幕监控前，需要在 macOS 隐私设置里允许屏幕录制。',
+      screenMonitorHelpText: '进行屏幕检查前，需要在 macOS 隐私设置里允许屏幕录制。',
       permissionGuideTitle: '权限引导',
       permissionGuideSteps: [
         {
@@ -77,7 +77,7 @@ function platformSettingsProfile(platform = process.platform) {
         {
           id: 'screen-recording',
           title: '屏幕录制',
-          summary: '开启屏幕监控和 LLM 截图分析前，需要允许屏幕录制权限。',
+          summary: '进行屏幕检查和 LLM 截图分析前，需要允许屏幕录制权限。',
           settingsKind: 'screen-recording',
           buttonLabel: '打开屏幕录制'
         }

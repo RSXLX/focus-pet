@@ -24,13 +24,37 @@ const {
 } = require('../src/focus-scene-templates');
 const { DEFAULT_INTERVENTION_POLICY, focusStatusAffectsPetVitals, shouldShowIntervention } = require('../src/intervention-policy');
 const { appendActivityLog, buildReviewFromEntries, buildReviewActionSuggestions, buildTaskReview, buildTomorrowPlan, makeStatusMessage, mergeTomorrowPlanTasks } = require('../src/focus');
+const {
+  DEFAULT_UPDATE_FEED_URL,
+  DEFAULT_UPDATE_PAGE_URL,
+  checkLatestVersion,
+  compareVersions: compareUpdateVersions,
+  normalizeUpdateFeedUrl
+} = require('../src/update-service');
 const chatService = require('../src/chat-service');
+const cloudService = require('../src/cloud-service');
+const cloudClient = require('../src/cloud-client');
 const { normalizeMessage, reconcileQueuedMessages } = chatService;
 const { applyLaunchAtLogin, launchAtLoginState } = require('../src/launch-login');
 const { reviewLlmConfig, summarizeDailyReview } = require('../src/review-llm');
-const { isLocalEndpoint, normalizeChatEndpoint } = require('../src/llm-provider');
+const {
+  DEFAULT_STEPFUN_CHAT_ENDPOINT,
+  DEFAULT_STEPFUN_ENDPOINT,
+  DEFAULT_STEPFUN_SCREEN_MODEL,
+  isLocalEndpoint,
+  normalizeChatEndpoint
+} = require('../src/llm-provider');
 const { parseFocusPetProcesses } = require('../scripts/process-utils');
 const { shouldRestartAfterExit } = require('../scripts/run-electron');
+const {
+  parseIceUrl: parseCloudTurnIceUrl,
+  summarizeIceUrls: summarizeCloudTurnIceUrls
+} = require('../scripts/verify-cloud-turn');
+const {
+  buildCallAcceptanceRecord,
+  parseCallAcceptanceSummary,
+  validateCallAcceptancePair
+} = require('../scripts/record-call-acceptance');
 const {
   parseWindowsFrontmost,
   platformFocusPermission,
@@ -43,6 +67,15 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 function tempDir(name) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `focus-pet-${name}-`));
+}
+
+function pngSize(filePath) {
+  const buffer = fs.readFileSync(filePath);
+  assert.equal(buffer.toString('ascii', 1, 4), 'PNG');
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20)
+  };
 }
 
 test('json storage writes atomically and backs up corrupt files before fallback', () => {
@@ -909,6 +942,15 @@ test('task and settings stores back up corrupt JSON before restoring usable stat
 
 test('settings store normalizes configurable behavior', () => {
   const store = createSettingsStore({ dataDir: tempDir('settings') });
+  const defaultSettings = store.getSettings();
+
+  assert.equal(defaultSettings.autoCheckUpdates, true);
+  assert.equal(defaultSettings.updateFeedUrl, DEFAULT_UPDATE_FEED_URL);
+  assert.equal(defaultSettings.screenMonitorProvider, 'stepfun');
+  assert.equal(defaultSettings.screenMonitorEndpoint, DEFAULT_STEPFUN_ENDPOINT);
+  assert.equal(defaultSettings.screenMonitorModel, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(defaultSettings.reviewLlmEnabled, false);
+
   const saved = store.updateSettings({
     popupCooldownMinutes: 0,
     idleNudgeMinutes: 120,
@@ -963,6 +1005,266 @@ test('settings store normalizes configurable behavior', () => {
   assert.equal(defaults.voiceRecordShortcut, 'Alt+R');
   assert.equal(defaults.socialActivityShareLevel, 'presence');
   assert.equal(defaults.activityRetentionDays, 365);
+});
+
+test('screen check defaults to StepFun vision and trusts screenshot analysis over app rules', async () => {
+  const { analyzeScreenActivity, monitorConfig } = require('../src/screen-monitor');
+  const settings = createSettingsStore({ dataDir: tempDir('stepfun-screen-check') }).getSettings();
+  const requests = [];
+
+  const config = monitorConfig(settings, { FOCUS_PET_STEPFUN_API_KEY: 'stepfun-key' });
+  assert.equal(config.provider, 'stepfun');
+  assert.equal(config.endpoint, DEFAULT_STEPFUN_CHAT_ENDPOINT);
+  assert.equal(config.model, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(config.configured, true);
+
+  const result = await analyzeScreenActivity({
+    settings: { ...settings, screenMonitorEnabled: true },
+    env: { FOCUS_PET_STEPFUN_API_KEY: 'stepfun-key' },
+    now: () => new Date('2026-07-02T10:00:00.000Z'),
+    getScreenPermissionStatus: () => 'granted',
+    currentTask: { text: '完成论文阅读笔记' },
+    frontmost: { app: 'Code', title: 'focus-pet' },
+    captureScreen: async () => ({ dataUrl: 'data:image/png;base64,screen', sourceName: 'Screen 1' }),
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                state: 'study',
+                activity_summary: '正在阅读论文资料并整理笔记',
+                task_relevance: 'on_task',
+                evidence: ['屏幕主体是论文内容和笔记编辑区域'],
+                confidence: 0.88,
+                privacy_risk: 'low',
+                suggested_intervention: 'none',
+                reasoning_visible: '截图内容与当前阅读任务一致'
+              })
+            }
+          }]
+        })
+      };
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'study');
+  assert.equal(result.taskRelevance, 'on_task');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, DEFAULT_STEPFUN_CHAT_ENDPOINT);
+  assert.equal(requests[0].options.headers.authorization, 'Bearer stepfun-key');
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(body.model, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(body.reasoning_effort, 'low');
+  assert.equal(body.messages[1].content[1].image_url.url, 'data:image/png;base64,screen');
+  assert.equal(body.messages[1].content[1].image_url.detail, 'low');
+});
+
+test('screen monitor uses Focus Pet Cloud proxy without a desktop LLM API key', async () => {
+  const { analyzeScreenActivity, screenCheckCloudConfig } = require('../src/screen-monitor');
+  const requests = [];
+  const settings = {
+    screenMonitorEnabled: true,
+    screenMonitorProvider: 'stepfun',
+    screenMonitorEndpoint: DEFAULT_STEPFUN_ENDPOINT,
+    screenMonitorModel: DEFAULT_STEPFUN_SCREEN_MODEL,
+    screenCheckCloudUrl: 'https://cloud.example.com/client',
+    screenCheckDeviceId: 'screen-device-a'
+  };
+
+  const cloudConfig = screenCheckCloudConfig(settings, {});
+  assert.equal(cloudConfig.configured, true);
+  assert.equal(cloudConfig.endpoint, 'https://cloud.example.com/api/screen-check');
+
+  const result = await analyzeScreenActivity({
+    settings,
+    env: {},
+    now: () => new Date('2026-07-02T11:00:00.000Z'),
+    getScreenPermissionStatus: () => 'granted',
+    currentTask: { text: '完成论文阅读笔记' },
+    frontmost: { app: 'Preview', title: 'paper.pdf' },
+    captureScreen: async () => ({ dataUrl: 'data:image/png;base64,Y2xvdWQtc2NyZWVu', sourceName: 'Screen 1' }),
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          source: 'focus-pet-cloud-stepfun',
+          state: 'study',
+          status: 'study',
+          activity: '正在阅读论文资料',
+          activitySummary: '正在阅读论文资料',
+          taskRelevance: 'on_task',
+          evidence: ['屏幕主体是论文内容'],
+          confidence: 0.9,
+          privacyRisk: 'low',
+          suggestedIntervention: 'none',
+          reasoningVisible: '画面和任务一致',
+          reason: '画面和任务一致',
+          suggestion: '先继续观察，不主动打扰。',
+          lowConfidence: false,
+          message: '屏幕检查：正在阅读论文资料'
+        })
+      };
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'study');
+  assert.equal(result.source, 'focus-pet-cloud-stepfun');
+  assert.equal(result.screenshot.dataUrl, 'data:image/png;base64,Y2xvdWQtc2NyZWVu');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://cloud.example.com/api/screen-check');
+  assert.equal(requests[0].options.headers['x-focus-pet-device-id'], 'screen-device-a');
+  assert.equal(Object.prototype.hasOwnProperty.call(requests[0].options.headers, 'authorization'), false);
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(body.image.dataUrl, 'data:image/png;base64,Y2xvdWQtc2NyZWVu');
+  assert.equal(body.currentTask.text, '完成论文阅读笔记');
+  assert.equal(body.frontmost.app, 'Preview');
+});
+
+test('settings migration upgrades legacy empty screen analysis defaults to StepFun check', () => {
+  const migrated = migrateSettingsState({
+    version: 1,
+    screenMonitorProvider: 'openai-compatible',
+    screenMonitorEndpoint: '',
+    screenMonitorModel: '',
+    reviewLlmEndpoint: 'https://review.example.com/v1',
+    reviewLlmModel: 'review-model'
+  });
+
+  assert.equal(migrated.screenMonitorProvider, 'stepfun');
+  assert.equal(migrated.screenMonitorEndpoint, DEFAULT_STEPFUN_ENDPOINT);
+  assert.equal(migrated.screenMonitorModel, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(migrated.reviewLlmEndpoint, 'https://review.example.com/v1');
+  assert.equal(migrated.reviewLlmModel, 'review-model');
+});
+
+test('settings migration repairs half-migrated StepFun screen check provider', () => {
+  const migrated = migrateSettingsState({
+    version: 1,
+    screenMonitorProvider: 'openai-compatible',
+    screenMonitorEndpoint: DEFAULT_STEPFUN_ENDPOINT,
+    screenMonitorModel: DEFAULT_STEPFUN_SCREEN_MODEL
+  });
+
+  assert.equal(migrated.screenMonitorProvider, 'stepfun');
+  assert.equal(migrated.screenMonitorEndpoint, DEFAULT_STEPFUN_ENDPOINT);
+  assert.equal(migrated.screenMonitorModel, DEFAULT_STEPFUN_SCREEN_MODEL);
+});
+
+test('update service detects newer GitHub releases and selects a platform download', async () => {
+  const requests = [];
+  const result = await checkLatestVersion({
+    currentVersion: '1.0.0',
+    feedUrl: DEFAULT_UPDATE_FEED_URL,
+    platform: 'darwin',
+    arch: 'arm64',
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          tag_name: 'v1.1.0',
+          html_url: 'https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0',
+          body: '稳定性改进',
+          assets: [
+            {
+              name: 'Focus-Pet-1.1.0-mac-arm64.zip',
+              browser_download_url: 'https://github.com/RSXLX/focus-pet/releases/download/v1.1.0/Focus-Pet-1.1.0-mac-arm64.zip'
+            },
+            {
+              name: 'Focus-Pet-1.1.0-mac-arm64.dmg',
+              browser_download_url: 'https://github.com/RSXLX/focus-pet/releases/download/v1.1.0/Focus-Pet-1.1.0-mac-arm64.dmg'
+            }
+          ]
+        })
+      };
+    }
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, DEFAULT_UPDATE_FEED_URL);
+  assert.equal(requests[0].options.cache, 'no-store');
+  assert.equal(result.ok, true);
+  assert.equal(result.currentVersion, '1.0.0');
+  assert.equal(result.latestVersion, '1.1.0');
+  assert.equal(result.available, true);
+  assert.equal(result.url, 'https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0');
+  assert.equal(result.downloadUrl, 'https://github.com/RSXLX/focus-pet/releases/download/v1.1.0/Focus-Pet-1.1.0-mac-arm64.dmg');
+  assert.equal(result.assetName, 'Focus-Pet-1.1.0-mac-arm64.dmg');
+  assert.equal(result.notes, '稳定性改进');
+});
+
+test('update service handles semver prefixes, generic feeds, and invalid feed urls', async () => {
+  assert.equal(compareUpdateVersions('v1.2.0', '1.1.9'), 1);
+  assert.equal(compareUpdateVersions('1.0.0', '1.0.0'), 0);
+  assert.equal(compareUpdateVersions('1.0.0-beta.1', '1.0.0'), -1);
+  assert.equal(normalizeUpdateFeedUrl('file:///tmp/latest.json'), DEFAULT_UPDATE_FEED_URL);
+
+  const result = await checkLatestVersion({
+    currentVersion: '1.2.0',
+    feedUrl: 'https://updates.example.com/focus-pet/latest.json',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        latestVersion: '1.2.0',
+        downloadUrl: 'https://updates.example.com/focus-pet/Focus-Pet-1.2.0.zip',
+        notes: '当前版本'
+      })
+    })
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.available, false);
+  assert.equal(result.latestVersion, '1.2.0');
+  assert.equal(result.url, 'https://updates.example.com/focus-pet/Focus-Pet-1.2.0.zip');
+});
+
+test('update service falls back to GitHub latest redirect when the API is rate limited', async () => {
+  const calls = [];
+  const result = await checkLatestVersion({
+    currentVersion: '1.0.0',
+    feedUrl: DEFAULT_UPDATE_FEED_URL,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url === DEFAULT_UPDATE_FEED_URL) {
+        return {
+          ok: false,
+          status: 403,
+          json: async () => ({ message: 'API rate limit exceeded' })
+        };
+      }
+      assert.equal(url, DEFAULT_UPDATE_PAGE_URL);
+      assert.equal(options.method, 'HEAD');
+      assert.equal(options.redirect, 'manual');
+      return {
+        ok: false,
+        status: 302,
+        headers: {
+          get: name => String(name).toLowerCase() === 'location'
+            ? 'https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0'
+            : ''
+        }
+      };
+    }
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.available, true);
+  assert.equal(result.latestVersion, '1.1.0');
+  assert.equal(result.url, 'https://github.com/RSXLX/focus-pet/releases/tag/v1.1.0');
+  assert.equal(result.downloadUrl, '');
+  assert.equal(result.assetName, '');
 });
 
 test('activity log appends with a configurable retention window', () => {
@@ -1814,10 +2116,9 @@ test('LLM connectivity self-check reports missing config without sending request
   const screenCheck = result.checks.find(check => check.id === 'screen-monitor');
   assert.equal(screenCheck.ok, false);
   assert.equal(screenCheck.status, 'needs-config');
-  assert.deepEqual(screenCheck.missing, ['endpoint', 'apiKey']);
-  assert.match(screenCheck.summary, /屏幕监控 LLM 缺少 endpoint、API key/);
-  assert.match(screenCheck.nextSteps.join('\n'), /FOCUS_PET_LLM_API_KEY|OPENAI_API_KEY/);
-  assert.match(screenCheck.nextSteps.join('\n'), /Chat Completions/);
+  assert.deepEqual(screenCheck.missing, ['apiKey']);
+  assert.match(screenCheck.summary, /屏幕检查 LLM 缺少 API key/);
+  assert.match(screenCheck.nextSteps.join('\n'), /FOCUS_PET_SCREEN_LLM_API_KEY|FOCUS_PET_STEPFUN_API_KEY|STEPFUN_API_KEY|STEP_API_KEY/);
 
   const reviewCheck = result.checks.find(check => check.id === 'review-llm');
   assert.equal(reviewCheck.ok, false);
@@ -1881,7 +2182,7 @@ test('LLM connectivity self-check sends minimal requests and explains HTTP failu
   const screenCheck = result.checks.find(check => check.id === 'screen-monitor');
   assert.equal(screenCheck.ok, true);
   assert.equal(screenCheck.status, 'connected');
-  assert.match(screenCheck.summary, /屏幕监控 LLM 连通/);
+  assert.match(screenCheck.summary, /屏幕检查 LLM 连通/);
 
   const reviewCheck = result.checks.find(check => check.id === 'review-llm');
   assert.equal(reviewCheck.ok, false);
@@ -1890,6 +2191,53 @@ test('LLM connectivity self-check sends minimal requests and explains HTTP failu
   assert.match(reviewCheck.summary, /复盘 LLM 请求失败：401/);
   assert.match(reviewCheck.detail, /invalid api key/);
   assert.match(reviewCheck.nextSteps.join('\n'), /API key/);
+});
+
+test('LLM connectivity self-check fails when Focus Pet Cloud screen check reports server config missing', async () => {
+  const { runLlmConnectivitySelfCheck } = require('../src/llm-self-check');
+  const requests = [];
+
+  const result = await runLlmConnectivitySelfCheck({
+    settings: {
+      screenCheckTransport: 'cloud',
+      screenCheckCloudUrl: 'https://cloud.example.com/api/screen-check',
+      reviewLlmProvider: 'ollama',
+      reviewLlmEndpoint: 'http://127.0.0.1:11434',
+      reviewLlmModel: 'llama3'
+    },
+    env: {},
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (String(url).includes('/api/screen-check')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: false,
+            status: 'needs-config',
+            reason: 'Focus Pet Cloud 需要在后端配置 StepFun API key 后才能进行屏幕检查',
+            missing: ['apiKey']
+          })
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: 'ok' } }] })
+      };
+    }
+  });
+
+  const screenCheck = result.checks.find(check => check.id === 'screen-monitor');
+  const reviewCheck = result.checks.find(check => check.id === 'review-llm');
+  assert.equal(result.ok, false);
+  assert.equal(screenCheck.ok, false);
+  assert.equal(screenCheck.status, 'needs-config');
+  assert.equal(screenCheck.usesScreenCheckCloud, true);
+  assert.deepEqual(screenCheck.missing, ['apiKey']);
+  assert.match(screenCheck.summary, /Focus Pet Cloud/);
+  assert.equal(reviewCheck.ok, true);
+  assert.equal(requests.length, 2);
 });
 
 test('LLM connectivity self-check treats local providers as no-key services', async () => {
@@ -2074,7 +2422,7 @@ test('external chat handles missing owner activity across sharing levels', () =>
   }
 });
 
-test('external chat sanitizes peer-owned activity before returning peer state', () => {
+test('external chat keeps peer clients blind to activity snapshots', () => {
   const peerOwnActivity = {
     id: 'peer-own-activity',
     from: 'peer-1',
@@ -2117,11 +2465,20 @@ test('external chat sanitizes peer-owned activity before returning peer state', 
       settings: { socialActivityShareLevel }
     });
     const serialized = JSON.stringify(peerState);
-    assert.doesNotMatch(serialized, /currentTask|frontmost|sourceName|media|PeerSecretApp|peer-secret-title|peer-screen\.png|peer 私密任务|peer 内部 message|peer 复盘完整摘要|peer 私密宠物消息|calm/);
+    assert.deepEqual(peerState.activities, {});
+    assert.deepEqual(peerState.activityLog, []);
+    assert.doesNotMatch(serialized, /peer 可共享学习状态|currentTask|frontmost|sourceName|media|PeerSecretApp|peer-secret-title|peer-screen\.png|peer 私密任务|peer 内部 message|peer 复盘完整摘要|peer 私密宠物消息|calm/);
   }
+
+  const ownerState = chatService.clientStateForAuth(chatService.resolveAuth('owner-token', state), state, {
+    port: 47321,
+    settings: { socialActivityShareLevel: 'screen-summary' }
+  });
+  assert.equal(ownerState.activities['peer-1'].frontmost.app, 'PeerSecretApp');
+  assert.equal(ownerState.activityLog[0].currentTask.text, 'peer 私密任务');
 });
 
-test('external chat sanitizes WebSocket activity events for peer-owned activity', () => {
+test('external chat only sends activity WebSocket events to the owner', () => {
   assert.equal(typeof chatService.activityEventForAuth, 'function');
   const peerOwnActivity = {
     id: 'peer-ws-activity',
@@ -2155,11 +2512,7 @@ test('external chat sanitizes WebSocket activity events for peer-owned activity'
   const ownerAuth = { role: 'owner', peerId: 'pet-owner', name: '我' };
 
   assert.equal(chatService.activityEventForAuth(peerOwnActivity, peerAuth, state, 'presence'), null);
-  const peerPayload = chatService.activityEventForAuth(peerOwnActivity, peerAuth, state, 'screen-summary');
-  assert.equal(peerPayload.activity, 'peer WebSocket 可共享学习状态');
-  assert.equal(peerPayload.reason, 'peer WebSocket 屏幕里有私密课程');
-  assert.deepEqual(peerPayload.review, { insight: 'peer websocket 学习节奏稳定' });
-  assert.doesNotMatch(JSON.stringify(peerPayload), /currentTask|frontmost|sourceName|media|PeerSecretApp|peer-secret-title|peer-ws-screen\.png|peer websocket 私密任务|peer websocket 内部 message|peer websocket 复盘完整摘要|peer websocket 私密宠物消息|calm/);
+  assert.equal(chatService.activityEventForAuth(peerOwnActivity, peerAuth, state, 'screen-summary'), null);
 
   const ownerPayload = chatService.activityEventForAuth(peerOwnActivity, ownerAuth, state, 'presence');
   assert.equal(ownerPayload.currentTask.text, 'peer websocket 私密任务');
@@ -2238,15 +2591,11 @@ test('external chat applies social activity sharing levels before peer state exp
     port: 47321,
     settings: { socialActivityShareLevel: 'screen-summary' }
   });
-  assert.equal(screenSummaryState.activities['pet-owner'].activity, '正在复习线性代数');
-  assert.equal(screenSummaryState.activities['pet-owner'].message, '正在复习线性代数');
-  assert.equal(screenSummaryState.activities['pet-owner'].sourceName, undefined);
-  assert.equal(screenSummaryState.activities['pet-owner'].reason, '屏幕中是课程笔记和习题');
-  assert.deepEqual(screenSummaryState.activities['pet-owner'].review, { insight: '学习内容和任务一致' });
-  assert.deepEqual(screenSummaryState.activityLog.map(activity => activity.id), ['activity-1']);
+  assert.deepEqual(screenSummaryState.activities, {});
+  assert.deepEqual(screenSummaryState.activityLog, []);
 
   const serialized = JSON.stringify(screenSummaryState);
-  assert.doesNotMatch(serialized, /私密 message|confidential deck|完成线代错题本|Obsidian|linear-algebra-private|study-screen\.png|长期上下文|私人节奏|calm/);
+  assert.doesNotMatch(serialized, /正在复习线性代数|屏幕中是课程笔记和习题|学习内容和任务一致|私密 message|confidential deck|完成线代错题本|Obsidian|linear-algebra-private|study-screen\.png|长期上下文|私人节奏|calm/);
 });
 
 test('external chat applies social activity sharing levels to activity messages', () => {
@@ -2336,29 +2685,12 @@ test('external chat applies social activity sharing levels to activity messages'
     port: 47321,
     settings: { socialActivityShareLevel: 'screen-summary' }
   });
-  const peerMessageActivity = peerState.messages[0].activity;
-
-  assert.equal(peerMessageActivity.activity, '正在整理产品优化方案');
-  assert.equal(peerMessageActivity.message, '正在整理产品优化方案');
-  assert.equal(peerMessageActivity.reason, '屏幕中是优化方案和任务清单');
-  assert.deepEqual(peerMessageActivity.review, { insight: '方案整理和当前目标一致' });
-  assert.equal(peerMessageActivity.sourceName, undefined);
-  assert.equal(peerMessageActivity.currentTask, undefined);
-  assert.equal(peerMessageActivity.frontmost, undefined);
-  assert.equal(peerMessageActivity.media, undefined);
+  assert.equal(peerState.messages[0].activity, null);
+  assert.equal(peerState.messages[1].activity, null);
   assert.equal(ownerState.messages[0].activity.currentTask.text, '重排 Focus Pet 路线图');
   assert.equal(ownerState.messages[0].activity.frontmost.app, 'Notion');
   assert.equal(ownerState.messages[1].activity.currentTask.text, 'peer 消息私密任务');
   assert.equal(ownerState.messages[1].activity.frontmost.app, 'PeerSecretApp');
-
-  const peerOwnMessageActivity = peerState.messages[1].activity;
-  assert.equal(peerOwnMessageActivity.activity, 'peer 消息可共享学习状态');
-  assert.equal(peerOwnMessageActivity.reason, 'peer 消息屏幕中是课程笔记');
-  assert.deepEqual(peerOwnMessageActivity.review, { insight: 'peer 消息学习节奏稳定' });
-  assert.equal(peerOwnMessageActivity.sourceName, undefined);
-  assert.equal(peerOwnMessageActivity.currentTask, undefined);
-  assert.equal(peerOwnMessageActivity.frontmost, undefined);
-  assert.equal(peerOwnMessageActivity.media, undefined);
 
   const presencePeerState = chatService.clientStateForAuth(peerAuth, state, {
     port: 47321,
@@ -2826,6 +3158,7 @@ test('remote client mac packaging wraps the deployed HTTPS client', () => {
   const packager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-remote-client-macos.js'), 'utf8');
 
   assert.equal(packageJson.scripts['package:mac:remote-client'], 'node scripts/package-remote-client-macos.js');
+  assert.equal(packageJson.scripts['package:mac:remote-client'], 'node scripts/package-remote-client-macos.js');
   assert.match(packager, /REMOTE_CLIENT_URL/);
   assert.match(packager, /if \(require\.main === module\)/);
   assert.match(packager, /parsed\.protocol !== 'https:'/);
@@ -2851,6 +3184,16 @@ test('remote client mac packaging wraps the deployed HTTPS client', () => {
   assert.equal(assertHttpsClientUrl('https://example.com/client/invite?code=abc'), 'https://example.com/client/invite?code=abc');
   assert.throws(() => assertHttpsClientUrl('http://example.com/client'), /HTTPS/);
   assert.throws(() => assertHttpsClientUrl('https://example.com/client-evil'), /\/client/);
+});
+
+test('remote client release assets are clearly separated from the desktop pet app', () => {
+  const packageJson = require('../package.json');
+  const releaseCommand = packageJson.scripts['release:mac:remote-client'];
+
+  assert.match(releaseCommand, /APP_NAME="Focus Pet Client"/);
+  assert.match(releaseCommand, /FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:remote-client/);
+  assert.doesNotMatch(releaseCommand, /APP_NAME="Focus Pet"/);
+  assert.doesNotMatch(releaseCommand, new RegExp('Control' + 'led'));
 });
 
 test('external chat exposes WebRTC signaling and ICE configuration', () => {
@@ -2965,6 +3308,581 @@ test('external chat records call lifecycle audit without storing SDP or ICE deta
   assert.doesNotMatch(serialized, /secret-sdp-body|candidate:secret|turn\.example\.com|secret-pass|\"sdp\"|\"candidate\"/);
 });
 
+test('Focus Pet Cloud registers device-bound users with stable public ids', () => {
+  const state = cloudService.createInitialCloudState({ now: () => '2026-07-02T10:00:00.000Z' });
+  const result = cloudService.registerUser({ displayName: '小林', deviceId: 'device-A' }, {
+    state,
+    id: () => 'user_abc123',
+    token: () => 'cloud-token-a',
+    friendCode: () => 'FP-ABCD-1234',
+    now: () => '2026-07-02T10:00:00.000Z'
+  });
+
+  assert.equal(result.user.id, 'user_abc123');
+  assert.equal(result.user.friendCode, 'FP-ABCD-1234');
+  assert.equal(result.authToken, 'cloud-token-a');
+  assert.equal(result.state.users[0].deviceId, undefined);
+  assert.match(result.state.users[0].deviceIdHash, /^[a-f0-9]{64}$/);
+  assert.equal(cloudService.resolveUserAuth('cloud-token-a', result.state, { deviceId: 'device-A' }).userId, 'user_abc123');
+  assert.equal(cloudService.resolveUserAuth('cloud-token-a', result.state, { deviceId: 'device-B' }), null);
+
+  const generated = cloudService.registerUser({ displayName: '数字码', deviceId: 'device-C' }, {
+    state: result.state,
+    id: () => 'user_numeric',
+    token: () => 'cloud-token-c'
+  });
+  assert.match(generated.user.friendCode, /^\d{6}$/);
+});
+
+test('desktop Cloud client registers refreshes and exposes chat-shaped state', async () => {
+  const dataDir = tempDir('cloud-client');
+  const accountPath = path.join(dataDir, 'cloud-account.json');
+  const requests = [];
+  const fetchImpl = async (url, options = {}) => {
+    requests.push({ url, options });
+    if (url === 'https://cloud.example.com/api/users') {
+      assert.equal(options.method, 'POST');
+      const body = JSON.parse(options.body);
+      assert.equal(body.displayName, '小林');
+      assert.match(body.deviceId, /^device-/);
+      return {
+        ok: true,
+        json: async () => ({
+          user: { id: 'user_a', displayName: '小林', friendCode: 'FP-A', online: true },
+          authToken: 'token-a',
+          deviceId: body.deviceId,
+          iceServers: [{ urls: 'turn:turn.example.com:3478?transport=tcp' }]
+        })
+      };
+    }
+    if (url === 'https://cloud.example.com/api/me') {
+      assert.equal(options.headers.authorization, 'Bearer token-a');
+      return {
+        ok: true,
+        json: async () => ({
+          self: { id: 'user_a', displayName: '小林', friendCode: 'FP-A', online: true },
+          friends: [{ id: 'user_b', displayName: 'Bob', friendCode: 'FP-B', online: true }],
+          messages: [{ id: 'cloud-msg-1', from: 'user_b', to: 'user_a', type: 'text', text: 'hi', createdAt: '2026-07-02T10:01:00.000Z' }],
+          iceServers: [{ urls: 'turn:turn.example.com:3478?transport=tcp' }]
+        })
+      };
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+
+  const state = await cloudClient.registerCloudUser(
+    { displayName: '小林' },
+    { accountPath, baseUrl: 'https://cloud.example.com/client', fetchImpl }
+  );
+
+  assert.equal(state.source, 'cloud');
+  assert.equal(state.signedIn, true);
+  assert.equal(state.self.friendCode, 'FP-A');
+  assert.deepEqual(state.friends.map(friend => [friend.id, friend.name, friend.status]), [['user_b', 'Bob', 'online']]);
+  assert.equal(state.messages[0].text, 'hi');
+  assert.match(state.websocketUrl, /^wss:\/\/cloud\.example\.com\/\?token=token-a&deviceId=device-/);
+  assert.equal(requests.length, 2);
+  assert.equal(JSON.parse(fs.readFileSync(accountPath, 'utf8')).authToken, 'token-a');
+});
+
+test('desktop Cloud client reports invalid friend codes instead of faking success', async () => {
+  const dataDir = tempDir('cloud-client-invalid-friend');
+  const accountPath = path.join(dataDir, 'cloud-account.json');
+  const fetchImpl = async (url, options = {}) => {
+    if (url === 'https://cloud.example.com/api/users') {
+      const body = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({
+          user: { id: 'user_a', displayName: 'Alice', friendCode: 'FP-A', online: true },
+          authToken: 'token-a',
+          deviceId: body.deviceId,
+          iceServers: []
+        })
+      };
+    }
+    if (url === 'https://cloud.example.com/api/me') {
+      return {
+        ok: true,
+        json: async () => ({
+          self: { id: 'user_a', displayName: 'Alice', friendCode: 'FP-A', online: true },
+          friends: [],
+          iceServers: []
+        })
+      };
+    }
+    if (url === 'https://cloud.example.com/api/friends') {
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers.authorization, 'Bearer token-a');
+      return {
+        ok: true,
+        json: async () => ({ ok: false, error: 'friend not found' })
+      };
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+
+  await cloudClient.registerCloudUser(
+    { displayName: 'Alice' },
+    { accountPath, baseUrl: 'https://cloud.example.com', fetchImpl }
+  );
+
+  await assert.rejects(
+    () => cloudClient.addCloudFriend('FP-MISSING', { accountPath, fetchImpl }),
+    /friend not found/
+  );
+});
+
+test('desktop pet wires Focus Pet Cloud account IPC into the chat surface', () => {
+  const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'preload.js'), 'utf8');
+  const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+
+  assert.match(packageJson.scripts.check, /src\/cloud-client\.js/);
+  assert.match(main, /require\('\.\/cloud-client'\)/);
+  for (const channel of ['cloud:get-state', 'cloud:register', 'cloud:add-friend', 'cloud:send-message', 'cloud:refresh', 'cloud:clear-account']) {
+    assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel}'`));
+  }
+  assert.match(preload, /getCloudState: \(\) => ipcRenderer\.invoke\('cloud:get-state'\)/);
+  assert.match(preload, /registerCloudUser: input => ipcRenderer\.invoke\('cloud:register', input\)/);
+  assert.match(preload, /sendCloudMessage: message => ipcRenderer\.invoke\('cloud:send-message', message\)/);
+  assert.match(renderer, /chatState = await window\.focusPet\.getCloudState\(\)/);
+  assert.match(renderer, /chatState\.websocketUrl/);
+  assert.match(renderer, /registerCloudChatAccount/);
+  assert.match(renderer, /addCloudChatFriend/);
+  assert.match(renderer, /copyCloudFriendCode/);
+  assert.match(renderer, /window\.focusPet\.sendCloudMessage\(outgoing\)/);
+  assert.match(renderer, /readFileAsDataUrl\(file\)/);
+  assert.match(renderer, /cloudChatConnectionStatus/);
+  assert.match(renderer, /function chatSocketOpen\(\)/);
+  assert.match(renderer, /ensureCloudChatSocketOpen/);
+  assert.match(renderer, /Cloud 正在连接，连上后会发起通话/);
+  assert.match(renderer, /chatCallAudio\.disabled = isCloud \? !signedIn \|\| !hasFriend : false/);
+  assert.doesNotMatch(renderer, /暂不发送文字消息/);
+  assert.match(indexHtml, /id="cloudChatAccount"/);
+  assert.match(indexHtml, /id="cloudFriendCode"/);
+  assert.match(indexHtml, /id="cloudCopyCodeButton"/);
+  assert.match(indexHtml, /placeholder="6 位好友码"/);
+  assert.match(indexHtml, /wss:\/\/reecewong520--focus-pet-cloud-cloud\.modal\.run/);
+  assert.doesNotMatch(indexHtml, new RegExp(`Control${'led'}|被控${'制端'}`));
+});
+
+test('Focus Pet Cloud pairs users by friend code with reciprocal friendship', () => {
+  const state = cloudService.createInitialCloudState();
+  const alice = cloudService.registerUser({ displayName: 'Alice', deviceId: 'device-A' }, {
+    state,
+    id: () => 'user_alice',
+    token: () => 'token-a',
+    friendCode: () => 'FP-ALICE'
+  });
+  const bob = cloudService.registerUser({ displayName: 'Bob', deviceId: 'device-B' }, {
+    state: alice.state,
+    id: () => 'user_bob',
+    token: () => 'token-b',
+    friendCode: () => 'FP-BOB'
+  });
+  const pair = cloudService.addFriendByCode('FP-BOB', { state: bob.state, auth: { userId: 'user_alice' } });
+
+  assert.equal(pair.ok, true);
+  assert.deepEqual(pair.state.friendships.map(item => [item.userId, item.friendId]), [
+    ['user_alice', 'user_bob'],
+    ['user_bob', 'user_alice']
+  ]);
+  assert.deepEqual(cloudService.clientStateForUser({ userId: 'user_alice' }, pair.state).friends.map(friend => friend.id), ['user_bob']);
+});
+
+test('Focus Pet Cloud sends text and image messages between friends', () => {
+  const state = cloudService.createInitialCloudState();
+  const alice = cloudService.registerUser({ displayName: 'Alice', deviceId: 'device-A' }, {
+    state,
+    id: () => 'user_alice',
+    token: () => 'token-a',
+    friendCode: () => '111111'
+  });
+  const bob = cloudService.registerUser({ displayName: 'Bob', deviceId: 'device-B' }, {
+    state: alice.state,
+    id: () => 'user_bob',
+    token: () => 'token-b',
+    friendCode: () => '222222'
+  });
+  const pair = cloudService.addFriendByCode('222222', { state: bob.state, auth: { userId: 'user_alice' } });
+  const text = cloudService.addCloudMessage({
+    to: 'user_bob',
+    type: 'text',
+    text: '今晚 8 点复盘',
+    clientId: 'client-text-1'
+  }, {
+    state: pair.state,
+    auth: { userId: 'user_alice' },
+    now: () => '2026-07-02T10:10:00.000Z'
+  });
+  const image = cloudService.addCloudMessage({
+    to: 'user_alice',
+    type: 'image',
+    text: '截图',
+    media: {
+      name: '../screen.png',
+      mimeType: 'image/png',
+      size: 10,
+      url: 'data:image/png;base64,Y2xvdWQtaW1hZ2U='
+    }
+  }, {
+    state: text.state,
+    auth: { userId: 'user_bob' },
+    now: () => '2026-07-02T10:11:00.000Z'
+  });
+
+  assert.equal(text.message.from, 'user_alice');
+  assert.equal(text.message.type, 'text');
+  assert.equal(image.message.media.name, 'screen.png');
+  assert.match(image.message.media.url, /^data:image\/png;base64,/);
+  assert.deepEqual(cloudService.clientStateForUser({ userId: 'user_alice' }, image.state).messages.map(message => message.type), ['text', 'image']);
+  assert.deepEqual(cloudService.clientStateForUser({ userId: 'user_bob' }, image.state).messages.map(message => message.type), ['text', 'image']);
+  assert.throws(() => cloudService.addCloudMessage({
+    to: 'user_eve',
+    type: 'text',
+    text: 'nope'
+  }, { state: image.state, auth: { userId: 'user_alice' } }), /unknown message participant/);
+});
+
+test('Focus Pet Cloud refreshes peer state when friends or sockets change', () => {
+  const source = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'cloud-service.js'), 'utf8');
+
+  assert.match(source, /function broadcastStateToUserAndFriends\(userId, state = loadState\(\)\)/);
+  assert.match(source, /broadcastStateToUserAndFriends\(auth\.userId, saved\)/);
+  assert.match(source, /if \(result\.friend\?\.id\) broadcastStateToUserAndFriends\(result\.friend\.id, saved\)/);
+  assert.match(source, /socket\.on\('close', \(\) => \{[\s\S]*broadcastStateToUserAndFriends\(auth\.userId, loadState\(\)\)/);
+  assert.match(source, /return jsonResponse\(res, status, \{ ok: false, error: result\.error \}\)/);
+});
+
+test('Focus Pet Cloud validates one-to-one WebRTC signaling between friends', () => {
+  const state = cloudService.createInitialCloudState();
+  state.users = [
+    { id: 'user_alice', displayName: 'Alice', friendCode: 'FP-ALICE', tokens: [] },
+    { id: 'user_bob', displayName: 'Bob', friendCode: 'FP-BOB', tokens: [] },
+    { id: 'user_eve', displayName: 'Eve', friendCode: 'FP-EVE', tokens: [] }
+  ];
+  state.friendships = [
+    { userId: 'user_alice', friendId: 'user_bob', createdAt: '2026-07-02T10:00:00.000Z' },
+    { userId: 'user_bob', friendId: 'user_alice', createdAt: '2026-07-02T10:00:00.000Z' }
+  ];
+
+  const offer = cloudService.normalizeCloudRealtimeEvent({
+    type: 'rtc-offer',
+    to: 'user_bob',
+    callId: 'call-1',
+    mode: 'video',
+    sdp: { type: 'offer', sdp: 'v=0' }
+  }, { userId: 'user_alice' }, state);
+
+  assert.equal(offer.event, 'rtc-offer');
+  assert.equal(offer.payload.from, 'user_alice');
+  assert.equal(offer.payload.to, 'user_bob');
+  assert.equal(offer.payload.mode, 'video');
+  assert.throws(() => cloudService.normalizeCloudRealtimeEvent({
+    type: 'rtc-offer',
+    to: 'user_eve',
+    callId: 'call-2',
+    mode: 'audio'
+  }, { userId: 'user_alice' }, state), /not friends/);
+});
+
+test('Focus Pet Cloud call audit omits SDP ICE and TURN details', () => {
+  const state = cloudService.createInitialCloudState();
+  const event = {
+    event: 'rtc-offer',
+    payload: {
+      from: 'user_alice',
+      to: 'user_bob',
+      callId: 'call-1',
+      mode: 'video',
+      sdp: { type: 'offer', sdp: 'secret-sdp' },
+      candidate: { candidate: 'candidate turn.example.com secret' }
+    }
+  };
+  const result = cloudService.recordCloudRealtimeAudit(event, 1, {
+    state,
+    now: () => '2026-07-02T10:00:00.000Z'
+  });
+
+  assert.equal(result.entry.event, 'rtc-offer');
+  assert.equal(result.entry.mode, 'video');
+  assert.doesNotMatch(JSON.stringify(result.state.callAuditLog), /secret-sdp|candidate|turn\.example\.com/);
+});
+
+test('Focus Pet Cloud reports TURN config validity without leaking ICE credentials', () => {
+  const validEnv = {
+    FOCUS_PET_CLOUD_RTC_ICE_SERVERS: JSON.stringify([
+      {
+        urls: ['turn:turn.example.com:3478?transport=tcp'],
+        username: 'secret-user-1234567890',
+        credential: 'secret-pass-1234567890'
+      }
+    ])
+  };
+  const validSummary = cloudService.rtcIceServerSummary(validEnv);
+  const validHealth = cloudService.healthState({
+    env: validEnv,
+    state: cloudService.createInitialCloudState()
+  });
+
+  assert.equal(validSummary.configured, true);
+  assert.equal(validSummary.configValid, true);
+  assert.equal(validSummary.configError, '');
+  assert.equal(validSummary.hasTurn, true);
+  assert.equal(validHealth.rtc.configValid, true);
+  assert.equal(validHealth.rtc.hasTurn, true);
+
+  const invalidEnv = {
+    FOCUS_PET_CLOUD_RTC_ICE_SERVERS: '{"urls":["turn:turn.example.com"],"username":"secret-user"'
+  };
+  const invalidSummary = cloudService.rtcIceServerSummary(invalidEnv);
+
+  assert.equal(invalidSummary.configured, true);
+  assert.equal(invalidSummary.configValid, false);
+  assert.equal(invalidSummary.configError, 'invalid-json');
+  assert.equal(invalidSummary.hasTurn, false);
+  assert.equal(invalidSummary.usingDefault, true);
+  assert.doesNotMatch(JSON.stringify({ validSummary, validHealth, invalidSummary }), /turn\.example\.com|secret-user|secret-pass/);
+});
+
+test('Cloud TURN verifier summarizes ICE URLs without leaking credentials', () => {
+  const tcpTurn = parseCloudTurnIceUrl('turn:turn.example.com:3478?transport=tcp');
+  const tlsTurn = parseCloudTurnIceUrl('turns:[2001:db8::1]:5349');
+  const summary = summarizeCloudTurnIceUrls([
+    'stun:stun.example.com:19302',
+    'turn:turn.example.com:3478?transport=tcp',
+    'turns:turn-secret.example.com:5349'
+  ]);
+
+  assert.equal(tcpTurn.scheme, 'turn');
+  assert.equal(tcpTurn.transport, 'tcp');
+  assert.equal(tcpTurn.port, 3478);
+  assert.equal(tcpTurn.tcpTestable, true);
+  assert.equal(tlsTurn.scheme, 'turns');
+  assert.equal(tlsTurn.host, '2001:db8::1');
+  assert.equal(tlsTurn.tcpTestable, true);
+  assert.equal(summary.hasTurn, true);
+  assert.equal(summary.turnUrlCount, 2);
+  assert.equal(summary.tcpTurnUrlCount, 2);
+  assert.doesNotMatch(JSON.stringify(summary), /secret-user|secret-pass|credential|username/);
+});
+
+test('Focus Pet Cloud proxies screen checks through StepFun without returning screenshots or secrets', async () => {
+  const requests = [];
+  const result = await cloudService.handleCloudScreenCheck({
+    body: {
+      image: { dataUrl: 'data:image/png;base64,Y2xvdWQtc2NyZWVu' },
+      currentTask: { text: '完成论文阅读笔记' },
+      frontmost: { app: 'Preview', title: 'paper.pdf' }
+    },
+    env: {
+      FOCUS_PET_CLOUD_STEPFUN_API_KEY: 'server-stepfun-key'
+    },
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                state: 'study',
+                activity_summary: '正在阅读论文资料并整理笔记',
+                task_relevance: 'on_task',
+                evidence: ['屏幕主体是论文内容和笔记区域'],
+                confidence: 0.91,
+                privacy_risk: 'low',
+                suggested_intervention: 'none',
+                reasoning_visible: '截图内容与当前阅读任务一致'
+              })
+            }
+          }]
+        })
+      };
+    },
+    now: () => '2026-07-02T11:30:00.000Z'
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.source, 'focus-pet-cloud-stepfun');
+  assert.equal(result.status, 'study');
+  assert.equal(result.taskRelevance, 'on_task');
+  assert.equal(result.screenshot, undefined);
+  assert.equal(result.image, undefined);
+  assert.equal(result.screenshotPolicy.returnedToClient, false);
+  assert.doesNotMatch(JSON.stringify(result), /Y2xvdWQtc2NyZWVu|server-stepfun-key/);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, DEFAULT_STEPFUN_CHAT_ENDPOINT);
+  assert.equal(requests[0].options.headers.authorization, 'Bearer server-stepfun-key');
+  const body = JSON.parse(requests[0].options.body);
+  assert.equal(body.model, DEFAULT_STEPFUN_SCREEN_MODEL);
+  assert.equal(body.messages[1].content[1].image_url.url, 'data:image/png;base64,Y2xvdWQtc2NyZWVu');
+  assert.match(body.messages[1].content[0].text, /完成论文阅读笔记/);
+});
+
+test('Focus Pet Cloud screen check requires only server-side StepFun configuration', async () => {
+  let calls = 0;
+  const missing = await cloudService.handleCloudScreenCheck({
+    body: {
+      image: { dataUrl: 'data:image/png;base64,Y2xvdWQtc2NyZWVu' }
+    },
+    env: {},
+    fetchImpl: async () => {
+      calls += 1;
+      throw new Error('fetch should not run without server key');
+    },
+    now: () => '2026-07-02T11:32:00.000Z'
+  });
+
+  assert.equal(missing.ok, false);
+  assert.equal(missing.status, 'needs-config');
+  assert.deepEqual(missing.missing, ['apiKey']);
+  assert.equal(calls, 0);
+
+  assert.throws(() => cloudService.normalizeCloudScreenCheckPayload({
+    image: { dataUrl: 'file:///tmp/screenshot.png' }
+  }), /image dataUrl required/);
+});
+
+test('Focus Pet Cloud exposes a Node-only backend entrypoint for public deployment', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  const source = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'cloud-service.js'), 'utf8');
+  const runner = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'run-cloud-service.js'), 'utf8');
+  const docs = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'focus-pet-cloud.md'), 'utf8');
+
+  assert.equal(packageJson.scripts['cloud:serve'], 'node scripts/run-cloud-service.js');
+  assert.match(packageJson.scripts.check, /src\/cloud-service\.js/);
+  assert.match(packageJson.scripts.check, /scripts\/run-cloud-service\.js/);
+  assert.match(runner, /cloudService\.start\(\)/);
+  assert.match(runner, /SIGTERM/);
+  assert.match(runner, /sanitizeLogText/);
+  assert.match(docs, /Focus Pet Cloud/);
+  assert.match(docs, /WebSocket 信令/);
+  assert.match(docs, /WebRTC/);
+  assert.match(docs, /TURN/);
+  assert.match(source, /socket\.readyState !== 1/);
+  assert.doesNotMatch(source, /socket\.OPEN/);
+  assert.match(source, /saveState\(result\.state\)/);
+});
+
+test('Focus Pet Cloud serves a public remote client for zero-setup calls', () => {
+  const source = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'cloud-service.js'), 'utf8');
+
+  assert.match(source, /function cloudClientHtml\(/);
+  assert.match(source, /url\.pathname === '\/client'/);
+  assert.match(source, /method:'POST',\s*headers:\{'content-type':'application\/json'\}/);
+  assert.match(source, /id="friendCode"/);
+  assert.match(source, /id="addFriendCode"/);
+  assert.match(source, /id="callAudio"/);
+  assert.match(source, /id="callVideo"/);
+  assert.match(source, /RTCPeerConnection/);
+  assert.match(source, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(source, /new WebSocket/);
+  assert.doesNotMatch(source, new RegExp(`Focus Pet Control${'led'}`));
+  assert.doesNotMatch(source, /id="activity"|id="activityImage"|id="activityLog"|对方正在做什么|截图分析面板/);
+});
+
+test('Focus Pet Cloud provides a Modal deployment target for zero-setup users', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  const modalApp = fs.readFileSync(path.join(PROJECT_ROOT, 'modal_app.py'), 'utf8');
+  const docs = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'focus-pet-cloud.md'), 'utf8');
+  const smokeScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'test-cloud-live.js'), 'utf8');
+  const relayScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'test-cloud-webrtc-relay.js'), 'utf8');
+  const acceptanceScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'record-call-acceptance.js'), 'utf8');
+  const releaseChecklist = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'release-checklist.md'), 'utf8');
+
+  assert.equal(packageJson.scripts['cloud:deploy:modal'], 'modal deploy modal_app.py');
+  assert.equal(packageJson.scripts['cloud:smoke'], 'node scripts/test-cloud-live.js');
+  assert.equal(packageJson.scripts['cloud:webrtc:verify'], 'node scripts/test-cloud-webrtc-relay.js');
+  assert.equal(packageJson.scripts['call:acceptance'], 'node scripts/record-call-acceptance.js');
+  assert.match(packageJson.scripts.check, /python3 -m py_compile modal_app\.py/);
+  assert.match(packageJson.scripts.check, /node --check scripts\/test-cloud-live\.js/);
+  assert.match(packageJson.scripts.check, /node --check scripts\/test-cloud-webrtc-relay\.js/);
+  assert.match(packageJson.scripts.check, /node --check scripts\/record-call-acceptance\.js/);
+  assert.match(modalApp, /modal\.App\("focus-pet-cloud"\)/);
+  assert.match(modalApp, /modal\.Image\.from_registry\("node:22-slim", add_python="3\.12"\)/);
+  assert.match(modalApp, /modal\.Volume\.from_name\("focus-pet-cloud-data", create_if_missing=True\)/);
+  assert.match(modalApp, /@modal\.web_server\(47821/);
+  assert.match(modalApp, /max_containers=1/);
+  assert.match(modalApp, /min_containers=1/);
+  assert.match(modalApp, /FOCUS_PET_CLOUD_DATA_DIR/);
+  assert.match(modalApp, /npm", "run", "cloud:serve"/);
+  assert.match(smokeScript, /registerCloudUser/);
+  assert.match(smokeScript, /addCloudFriend/);
+  assert.match(smokeScript, /sendCloudMessage/);
+  assert.match(smokeScript, /getCloudMe/);
+  assert.match(smokeScript, /new WebSocket/);
+  assert.match(smokeScript, /\/api\/screen-check/);
+  assert.match(smokeScript, /invalidFriendCodeRejected/);
+  assert.match(smokeScript, /stateHasFriendOnline/);
+  assert.match(smokeScript, /stateHasMessage/);
+  assert.match(smokeScript, /waitForSocketEvent\(bobSocket, 'message'/);
+  assert.match(smokeScript, /waitForSocketEvent\(aliceSocket, 'message'/);
+  assert.match(smokeScript, /messages:\s*\{\s*text: textMessage,\s*image: imageMessage\s*\}/);
+  assert.match(smokeScript, /onlineRefresh/);
+  assert.match(smokeScript, /offlineRefresh/);
+  assert.match(smokeScript, /waitForSocketEvent\(bobSocket, 'call-invite'/);
+  assert.match(relayScript, /new BrowserWindow/);
+  assert.match(relayScript, /RTCPeerConnection/);
+  assert.match(relayScript, /iceTransportPolicy: input\.relayOnly \? 'relay' : 'all'/);
+  assert.match(relayScript, /createSyntheticStream\(mode\)/);
+  assert.match(relayScript, /selected WebRTC candidate pair did not use relay candidates/);
+  assert.match(acceptanceScript, /parseCallAcceptanceSummary/);
+  assert.match(acceptanceScript, /validateCallAcceptancePair/);
+  assert.match(acceptanceScript, /friend-code/);
+  assert.match(acceptanceScript, /turn-url/);
+  assert.match(docs, /modal deploy modal_app\.py/);
+  assert.match(docs, /cloud:webrtc:verify[\s\S]*iceTransportPolicy: 'relay'/);
+  assert.match(docs, /call:acceptance[\s\S]*Markdown 记录/);
+  assert.match(docs, /不保存好友码、token、SDP、ICE candidate、TURN URL、IP 或设备 ID/);
+  assert.match(releaseChecklist, /npm run cloud:webrtc:verify/);
+  assert.match(releaseChecklist, /npm run call:acceptance/);
+  assert.match(releaseChecklist, /两台真实电脑、不同网络下的语音\/视频人工验收/);
+  assert.match(docs, /GitHub Pages[\s\S]*不能承载 Node\/WebSocket 后端/);
+});
+
+test('call acceptance records validate real two-computer call summaries without storing sensitive data', () => {
+  const sideA = [
+    'Focus Pet 通话验收状态',
+    '时间：2026-07-07T06:00:00.000Z',
+    '模式：video',
+    '状态：通话中 · 已连接 · 远端音视频 · relay',
+    '远端媒体：audio,video',
+    '连接：connected',
+    'Relay：yes',
+    '来源：cloud'
+  ].join('\n');
+  const sideB = [
+    'Focus Pet 通话验收状态',
+    '时间：2026-07-07T06:00:01.000Z',
+    '模式：video',
+    '状态：通话中 · 已连接 · 远端音视频 · relay',
+    '远端媒体：video,audio',
+    '连接：completed',
+    'Relay：yes',
+    '来源：cloud'
+  ].join('\n');
+  const parsed = parseCallAcceptanceSummary(sideA);
+  assert.equal(parsed.headerOk, true);
+  assert.deepEqual(parsed.remoteKinds, ['audio', 'video']);
+  assert.deepEqual(parsed.sensitiveIssues, []);
+  const result = validateCallAcceptancePair({ sideA, sideB }, { mode: 'video', requireRelay: true });
+  assert.equal(result.ok, true);
+  const record = buildCallAcceptanceRecord(result, '2026-07-07T06:01:00.000Z');
+  assert.match(record, /验收结果：通过/);
+  assert.match(record, /要求 relay：是/);
+  assert.doesNotMatch(record, /secret|turn:example|friendCode|authToken|deviceId|iceServers|wss?:\/\//i);
+
+  const leaked = `${sideA}\nSDP: secret\ncandidate: secret\nturn:example.invalid`;
+  const failed = validateCallAcceptancePair({ sideA: leaked, sideB }, { mode: 'video', requireRelay: true });
+  assert.equal(failed.ok, false);
+  assert.ok(failed.failures.some(item => item.startsWith('sideA:sensitive-')));
+});
+
 test('remote social client supports invite onboarding, messaging, and WebRTC calls', () => {
   const chatService = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'chat-service.js'), 'utf8');
 
@@ -2982,9 +3900,9 @@ test('remote social client supports invite onboarding, messaging, and WebRTC cal
   assert.match(chatService, />语音消息<\/button>/);
   assert.match(chatService, /FILE_ACCEPT/);
   assert.match(chatService, /className='file-card'/);
-  assert.match(chatService, /id="activity"/);
-  assert.match(chatService, /id="activityImage"/);
-  assert.match(chatService, /id="activityLog"/);
+  assert.doesNotMatch(chatService, /id="activity"/);
+  assert.doesNotMatch(chatService, /id="activityImage"/);
+  assert.doesNotMatch(chatService, /id="activityLog"/);
   assert.match(chatService, /<aside class="sidebar">[\s\S]*<h2>好友<\/h2>[\s\S]*<div id="friends"><\/div>[\s\S]*<\/aside>/);
   assert.match(chatService, /<div id="messages" class="messages"><\/div>/);
   assert.match(chatService, /id="callAudio"/);
@@ -3055,6 +3973,7 @@ test('desktop chat UI keeps a minimal toolbar with hidden media and WebRTC suppo
   assert.match(indexHtml, /id="chatRtcCancel"/);
   assert.match(indexHtml, /id="localCallVideo"/);
   assert.match(indexHtml, /id="remoteCallVideo"/);
+  assert.match(indexHtml, /id="chatCallStatus"[^>]*role="button"[^>]*tabindex="0"/);
   assert.doesNotMatch(styles, /\.chat-compose\s*\{[^}]*display:\s*none/);
   assert.match(styles, /\.chat-tools\s*\{[\s\S]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
   assert.doesNotMatch(styles, /#chatCallAudio,\s*#chatCallVideo\s*\{[\s\S]*display:\s*none/);
@@ -3063,6 +3982,9 @@ test('desktop chat UI keeps a minimal toolbar with hidden media and WebRTC suppo
   assert.match(styles, /\.chat-file-card/);
   assert.match(styles, /\.chat-call-stage/);
   assert.match(styles, /\.chat-rtc-notice/);
+  assert.match(styles, /\.chat-call-status[\s\S]*text-overflow: ellipsis/);
+  assert.match(styles, /\.chat-call-status[\s\S]*cursor: copy/);
+  assert.doesNotMatch(styles, /\.chat-call-status\s*\{[\s\S]*clip-path: inset\(50%\)/);
   assert.match(styles, /\.peer-activity/);
   assert.match(styles, /\.peer-activity-log/);
   assert.match(renderer, /window\.focusPet\.markRead/);
@@ -3082,6 +4004,20 @@ test('desktop chat UI keeps a minimal toolbar with hidden media and WebRTC suppo
   assert.match(renderer, /data\.event === 'activity'/);
   assert.match(renderer, /new RTCPeerConnection/);
   assert.match(renderer, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(renderer, /function selectedChatCandidatePairSummary\(peer\)/);
+  assert.match(renderer, /candidateType === 'relay'/);
+  assert.match(renderer, /function updateChatRemoteMediaState\(stream\)/);
+  assert.match(renderer, /function renderChatCallStatus\(\)/);
+  assert.match(renderer, /function chatCallAcceptanceSummary\(\)/);
+  assert.match(renderer, /function copyChatCallAcceptanceSummary\(\)/);
+  assert.match(renderer, /chatCallStatus\.addEventListener\('click'/);
+  assert.match(renderer, /window\.focusPet\.copyText\(summary\)/);
+  const summaryStart = renderer.indexOf('function chatCallAcceptanceSummary()');
+  const summaryEnd = renderer.indexOf('async function copyChatCallAcceptanceSummary()', summaryStart);
+  const acceptanceSummarySource = renderer.slice(summaryStart, summaryEnd);
+  assert.ok(summaryStart >= 0 && summaryEnd > summaryStart);
+  assert.doesNotMatch(acceptanceSummarySource, /candidate\.candidate|friendCode|authToken|sdp|iceServers|websocketUrl|deviceId/);
+  assert.match(renderer, /远端音视频/);
   assert.match(renderer, /RTC_NETWORK_NOTICE_KEY/);
   assert.match(renderer, /function chatRtcNoticeAccepted/);
   assert.match(renderer, /function showChatRtcNotice/);
@@ -3114,6 +4050,8 @@ test('desktop chat UI keeps a minimal toolbar with hidden media and WebRTC suppo
   assert.match(main, /setPermissionRequestHandler/);
   assert.match(main, /192\\.168/);
   assert.match(main, /publishScreenActivity/);
+  assert.match(main, /socialActivityShareLevel === 'screen-summary'/);
+  assert.match(main, /publishScreenActivity\(withContext, \{ includeScreenshot: false \}\)/);
   assert.match(main, /publishActivitySnapshot/);
 });
 
@@ -3159,6 +4097,26 @@ test('settings page exposes one-click LLM connectivity self-check', () => {
   assert.match(packageJson.scripts.check, /src\/llm-self-check\.js/);
 });
 
+test('settings page presents screenshot analysis as screen check instead of monitoring', () => {
+  const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
+  const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
+  const llmSelfCheck = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'llm-self-check.js'), 'utf8');
+
+  assert.match(indexHtml, /AI 检查和复盘/);
+  assert.match(indexHtml, /<span>屏幕检查<\/span>/);
+  assert.match(indexHtml, /<span>检查间隔 秒<\/span>/);
+  assert.match(indexHtml, /<option value="stepfun">StepFun 视觉检查<\/option>/);
+  assert.match(indexHtml, /placeholder="https:\/\/api\.stepfun\.com\/v1"/);
+  assert.match(indexHtml, /<button id="testScreenMonitor" type="button">测试检查<\/button>/);
+  assert.doesNotMatch(indexHtml, /测试监控/);
+
+  assert.match(renderer, /app: '屏幕检查'/);
+  assert.match(renderer, /屏幕检查需要 LLM endpoint、model 和 API key/);
+  assert.doesNotMatch(renderer, /屏幕监控需要 LLM endpoint、model 和 API key/);
+  assert.match(llmSelfCheck, /title: '屏幕检查 LLM'/);
+  assert.match(llmSelfCheck, /FOCUS_PET_STEPFUN_API_KEY/);
+});
+
 test('settings page is layered into basic focus AI social and advanced groups', () => {
   const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
   const styles = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'styles.css'), 'utf8');
@@ -3174,11 +4132,12 @@ test('settings page is layered into basic focus AI social and advanced groups', 
   assert.match(indexHtml, /id="settingsGroupBasic"[\s\S]*id="settingLaunchAtLogin"[\s\S]*id="settingCooldown"[\s\S]*id="settingIdle"[\s\S]*id="settingIntensity"/);
   assert.match(indexHtml, /id="settingsGroupFocus"[\s\S]*id="settingFocusKeywords"[\s\S]*id="settingStudyKeywords"[\s\S]*id="settingGameKeywords"[\s\S]*id="settingDistractionKeywords"[\s\S]*id="settingGameApps"[\s\S]*id="settingWorkApps"/);
   assert.match(indexHtml, /id="settingsGroupAi"[\s\S]*data-setting-risk="ai"[\s\S]*id="settingScreenMonitorEnabled"[\s\S]*id="settingScreenMonitorEndpoint"[\s\S]*id="settingReviewLlmEnabled"[\s\S]*id="testLlmConnectivity"[\s\S]*id="testScreenMonitor"/);
-  assert.match(indexHtml, /id="settingsGroupSocial"[\s\S]*data-setting-risk="social"[\s\S]*id="settingSocialActivityShareLevel"[\s\S]*id="settingMediaMb"[\s\S]*id="settingVoiceShortcut"[\s\S]*邀请码[\s\S]*通话配置/);
-  assert.match(indexHtml, /value="presence"[\s\S]*只共享在线状态/);
-  assert.match(indexHtml, /value="status"[\s\S]*共享工作\/学习\/休息状态/);
-  assert.match(indexHtml, /value="summary"[\s\S]*共享状态摘要/);
-  assert.match(indexHtml, /value="screen-summary"[\s\S]*共享屏幕分析摘要/);
+  assert.match(indexHtml, /id="settingsGroupSocial"[\s\S]*data-setting-risk="social"[\s\S]*id="settingSocialActivityShareLevel"[\s\S]*id="settingMediaMb"[\s\S]*id="settingVoiceShortcut"[\s\S]*好友码[\s\S]*通话/);
+  assert.match(indexHtml, /value="presence"[\s\S]*仅记录在线状态/);
+  assert.match(indexHtml, /value="status"[\s\S]*好友记录工作\/学习\/休息状态/);
+  assert.match(indexHtml, /value="summary"[\s\S]*好友记录状态摘要/);
+  assert.match(indexHtml, /value="screen-summary"[\s\S]*好友记录屏幕分析摘要/);
+  assert.match(indexHtml, /截图分析不发给好友/);
   assert.match(indexHtml, /id="settingsGroupAdvanced"[\s\S]*data-setting-risk="advanced"[\s\S]*id="settingUpdateUrl"[\s\S]*id="settingActivityRetentionDays"[\s\S]*id="openDataFromSettings"[\s\S]*id="runDiagnosticsFromSettings"[\s\S]*id="permissionGuide"/);
 
   assert.match(renderer, /const settingGroupButtons = Array\.from\(document\.querySelectorAll\('\[data-settings-tab\]'\)\)/);
@@ -3207,9 +4166,10 @@ test('settings page exposes local-first LLM provider controls', () => {
 
   assert.match(indexHtml, /id="settingLlmCloudMode"/);
   assert.match(indexHtml, /value="local-only"[\s\S]*仅本地/);
+  assert.match(indexHtml, /id="settingScreenMonitorProvider"[\s\S]*value="stepfun"[\s\S]*StepFun 视觉检查/);
   assert.match(indexHtml, /id="settingScreenMonitorProvider"[\s\S]*value="ollama"[\s\S]*Ollama/);
   assert.match(indexHtml, /id="settingReviewLlmProvider"[\s\S]*value="local-openai-compatible"[\s\S]*本地 OpenAI-compatible/);
-  assert.match(indexHtml, /http:\/\/127\.0\.0\.1:11434/);
+  assert.match(indexHtml, /placeholder="https:\/\/api\.stepfun\.com\/v1"/);
 
   assert.match(renderer, /llmCloudMode: document\.querySelector\('#settingLlmCloudMode'\)/);
   assert.match(renderer, /screenMonitorProvider: document\.querySelector\('#settingScreenMonitorProvider'\)/);
@@ -3221,7 +4181,7 @@ test('settings page exposes local-first LLM provider controls', () => {
   assert.match(packageJson.scripts.check, /src\/llm-provider\.js/);
 });
 
-test('onboarding guide offers three modes and keeps advanced capabilities opt-in', () => {
+test('onboarding guide offers three modes and keeps AI/social capabilities opt-in', () => {
   const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
   const styles = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'styles.css'), 'utf8');
   const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
@@ -3229,9 +4189,9 @@ test('onboarding guide offers three modes and keeps advanced capabilities opt-in
 
   assert.match(indexHtml, /id="onboardingToggle"/);
   assert.match(indexHtml, /id="onboardingPanel" class="onboarding-panel hidden"/);
-  assert.match(indexHtml, /data-onboarding-mode="basic" data-onboarding-duration="under-3-minutes"[\s\S]*基础模式[\s\S]*任务 \+ 宠物 \+ 前台 App 判断[\s\S]*会采集什么[\s\S]*不会采集什么[\s\S]*数据保存在哪里[\s\S]*是否会外发[\s\S]*id="completeBasicOnboarding"/);
+  assert.match(indexHtml, /data-onboarding-mode="basic" data-onboarding-duration="under-3-minutes"[\s\S]*基础模式[\s\S]*任务 \+ 宠物 \+ 前台 App 判断[\s\S]*采集[\s\S]*不做[\s\S]*保存[\s\S]*外发[\s\S]*id="completeBasicOnboarding"/);
   assert.match(indexHtml, /data-onboarding-mode="enhanced"[\s\S]*增强模式[\s\S]*工作\/学习\/娱乐关键词[\s\S]*复盘[\s\S]*id="openEnhancedOnboarding"/);
-  assert.match(indexHtml, /data-onboarding-mode="advanced" data-onboarding-default="off"[\s\S]*高级模式[\s\S]*屏幕 LLM[\s\S]*社交监督[\s\S]*WebRTC[\s\S]*id="openAdvancedOnboarding"/);
+  assert.match(indexHtml, /data-onboarding-mode="advanced" data-onboarding-default="off"[\s\S]*高级模式[\s\S]*屏幕检查[\s\S]*社交监督[\s\S]*WebRTC[\s\S]*id="openAdvancedOnboarding"/);
 
   assert.match(renderer, /const onboardingPanel = document\.querySelector\('#onboardingPanel'\)/);
   assert.match(renderer, /const ONBOARDING_MODE_KEY = 'focusPetOnboardingMode'/);
@@ -3247,7 +4207,7 @@ test('onboarding guide offers three modes and keeps advanced capabilities opt-in
   assert.match(styles, /\.onboarding-card/);
   assert.match(styles, /\.onboarding-card\[data-onboarding-default="off"\]/);
   assert.equal(settings.screenMonitorEnabled, false);
-  assert.equal(settings.autoCheckUpdates, false);
+  assert.equal(settings.autoCheckUpdates, true);
 });
 
 test('LLM self-check styles constrain long diagnostic text inside settings cards', () => {
@@ -3937,6 +4897,7 @@ test('release preflight checklist documents required gates and supports fast loc
     runDiagnosticsBundleOutputCheck,
     runDiagnosticsSummaryOutputCheck,
     runDocsBoundaryCheck,
+    runCloudHealthCheck,
     runErrorLogCheck,
     runChatBackendDeployCheck,
     runOptimizationPlanCheck,
@@ -3957,8 +4918,11 @@ test('release preflight checklist documents required gates and supports fast loc
     'screen-pipeline',
     'package-scripts',
     'chat-backend-deploy',
+    'cloud-health',
+    'cloud-live-smoke',
     'mac-package',
-    'mac-remote-client-package',
+    'mac-release-assets',
+    'mac-remote-client-release',
     'mac-signing',
     'mac-notarization',
     'windows-package',
@@ -3989,22 +4953,44 @@ test('release preflight checklist documents required gates and supports fast loc
   assert.equal(checklist.find(item => item.id === 'package-scripts').runGroup, 'fast');
   assert.equal(checklist.find(item => item.id === 'chat-backend-deploy').command, 'node scripts/release-preflight.js --check chat-backend-deploy');
   assert.equal(checklist.find(item => item.id === 'chat-backend-deploy').runGroup, 'fast');
+  assert.equal(checklist.find(item => item.id === 'cloud-health').command, 'node scripts/release-preflight.js --check cloud-health');
+  assert.equal(checklist.find(item => item.id === 'cloud-health').runGroup, 'full');
+  assert.equal(checklist.find(item => item.id === 'cloud-live-smoke').command, 'npm run cloud:smoke');
+  assert.equal(checklist.find(item => item.id === 'cloud-live-smoke').manual, true);
+  assert.equal(checklist.find(item => item.id === 'cloud-live-smoke').required, true);
+  assert.equal(runCloudHealthCheck({
+    url: 'https://cloud.example.com/client',
+    health: { ok: true, screenCheck: { enabled: true }, rtc: { hasTurn: true } }
+  }).ok, true);
+  assert.deepEqual(runCloudHealthCheck({
+    health: { ok: true, screenCheck: { enabled: true }, rtc: { hasTurn: false } }
+  }).failures, ['turn-missing']);
+  assert.deepEqual(runCloudHealthCheck({
+    health: { ok: true, screenCheck: { enabled: true }, rtc: { configValid: false, hasTurn: false } }
+  }).failures, ['turn-config-invalid', 'turn-missing']);
   assert.equal(checklist.find(item => item.id === 'mac-package').platform, 'darwin');
-  assert.equal(checklist.find(item => item.id === 'mac-remote-client-package').command, 'npm run package:mac:remote-client');
-  assert.equal(checklist.find(item => item.id === 'mac-remote-client-package').platform, 'darwin');
-  assert.equal(checklist.find(item => item.id === 'mac-remote-client-package').runGroup, 'package');
-  assert.equal(checklist.find(item => item.id === 'mac-remote-client-package').manual, true);
+  assert.equal(checklist.find(item => item.id === 'mac-package').manual, true);
+  assert.equal(checklist.find(item => item.id === 'mac-release-assets').command, 'npm run release:mac');
+  assert.equal(checklist.find(item => item.id === 'mac-release-assets').platform, 'darwin');
+  assert.equal(checklist.find(item => item.id === 'mac-release-assets').runGroup, 'package');
+  assert.equal(checklist.find(item => item.id === 'mac-release-assets').manual, undefined);
+  assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').command, 'npm run release:mac:remote-client');
+  assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').platform, 'darwin');
+  assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').runGroup, 'package');
+  assert.equal(checklist.find(item => item.id === 'mac-remote-client-release').manual, true);
+  assert.equal(checklist.find(item => item.id === 'mac-signing').manual, true);
   assert.equal(checklist.find(item => item.id === 'mac-notarization').command, 'npm run notarize:mac && npm run verify:mac');
   assert.equal(checklist.find(item => item.id === 'mac-notarization').platform, 'darwin');
   assert.equal(checklist.find(item => item.id === 'mac-notarization').runGroup, 'package');
+  assert.equal(checklist.find(item => item.id === 'mac-notarization').manual, true);
   assert.equal(checklist.find(item => item.id === 'windows-package').platform, 'win32');
 
   const fastIds = selectReleasePreflightItems(checklist, { run: 'fast' }).map(item => item.id);
   assert.deepEqual(fastIds, ['node-tests', 'syntax-check', 'diagnostics-summary', 'diagnostics-bundle', 'diagnostics-bundle-output', 'package-scripts', 'chat-backend-deploy', 'docs-boundary', 'optimization-plan', 'error-log']);
   const fullIds = selectReleasePreflightItems(checklist, { run: 'full' }).map(item => item.id);
-  assert.deepEqual(fullIds, ['node-tests', 'syntax-check', 'diagnostics-summary', 'diagnostics-bundle', 'diagnostics-bundle-output', 'render-qa', 'screen-pipeline', 'package-scripts', 'chat-backend-deploy', 'docs-boundary', 'optimization-plan', 'error-log']);
+  assert.deepEqual(fullIds, ['node-tests', 'syntax-check', 'diagnostics-summary', 'diagnostics-bundle', 'diagnostics-bundle-output', 'render-qa', 'screen-pipeline', 'package-scripts', 'chat-backend-deploy', 'cloud-health', 'docs-boundary', 'optimization-plan', 'error-log']);
   const packageIds = selectReleasePreflightItems(checklist, { run: 'package' }).map(item => item.id);
-  assert.deepEqual(packageIds, ['mac-package', 'mac-signing', 'mac-notarization']);
+  assert.deepEqual(packageIds, ['mac-release-assets']);
   assert.deepEqual(parseArgs(['--json', '--run=fast', '--check=error-log']), {
     json: true,
     run: 'fast',
@@ -4447,6 +5433,7 @@ test('release preflight checklist documents required gates and supports fast loc
   assert.deepEqual(packageScripts.missingFiles, []);
   assert.deepEqual(packageScripts.missingCheckEntries, []);
   assert.deepEqual(packageScripts.checkedScripts, [
+    'icons:generate',
     'package:mac',
     'package:win',
     'package:mac:remote-client',
@@ -5171,6 +6158,7 @@ test('release preflight checklist documents required gates and supports fast loc
   const weakCheckPackageRoot = tempDir('release-preflight-package-scripts-weak-check');
   fs.mkdirSync(path.join(weakCheckPackageRoot, 'scripts'), { recursive: true });
   for (const scriptFile of [
+    'generate-app-icons.js',
     'package-macos.js',
     'package-windows.js',
     'package-remote-client-macos.js',
@@ -5185,6 +6173,7 @@ test('release preflight checklist documents required gates and supports fast loc
   fs.writeFileSync(path.join(weakCheckPackageRoot, 'package.json'), JSON.stringify({
     scripts: {
       check: [
+        'node --check scripts/generate-app-icons.js',
         'node --check scripts/package-macos.js',
         'echo scripts/package-windows.js',
         'node --check scripts/package-remote-client-macos.js',
@@ -5194,6 +6183,7 @@ test('release preflight checklist documents required gates and supports fast loc
         'node --check scripts/run-pet-render-verify.js',
         'echo scripts/test-screen-review-pipeline.js'
       ].join(' && '),
+      'icons:generate': 'node scripts/generate-app-icons.js',
       'package:mac': 'node scripts/package-macos.js',
       'package:win': 'node scripts/package-windows.js',
       'package:mac:remote-client': 'node scripts/package-remote-client-macos.js',
@@ -5478,6 +6468,32 @@ test('release and local LLM docs describe current diagnostics gates', () => {
   assert.match(systemOverview, /冒号、括号、破折号或空格/);
   assert.match(systemOverview, /未通过/);
   assert.match(systemOverview, /snake_case[\s\S]*kebab-case|kebab-case[\s\S]*snake_case/);
+});
+
+test('public download docs point to the full desktop pet release', () => {
+  const packageJson = require('../package.json');
+  const tag = `v${packageJson.version}`;
+  const readme = fs.readFileSync(path.join(PROJECT_ROOT, 'README.md'), 'utf8');
+  const readmeZh = fs.readFileSync(path.join(PROJECT_ROOT, 'README.zh-CN.md'), 'utf8');
+  const focusCloud = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'focus-pet-cloud.md'), 'utf8');
+  const systemOverview = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'system-overview.md'), 'utf8');
+  const socialBoundary = fs.readFileSync(path.join(PROJECT_ROOT, 'docs', 'social-security-boundary.md'), 'utf8');
+
+  assert.match(readme, new RegExp(`Current release: \\[${tag}\\]`));
+  assert.match(readme, new RegExp(`Latest release: \\[${tag}\\]`));
+  assert.match(readmeZh, new RegExp(`当前版本：\\[${tag}\\]`));
+  assert.match(readmeZh, new RegExp(`最新版本：\\[${tag}\\]`));
+  for (const doc of [readme, readmeZh]) {
+    assert.doesNotMatch(doc, /releases\/tag\/v1\.0\.[012]/);
+    assert.match(doc, /release:mac/);
+  }
+  assert.match(focusCloud, /默认公开下载[\s\S]*完整桌宠/);
+  assert.match(focusCloud, /npm run release:mac/);
+  assert.match(focusCloud, /聊天\/通话客户端[\s\S]*release:mac:remote-client/);
+  assert.match(systemOverview, /普通公开下载[\s\S]*完整桌宠[\s\S]*npm run release:mac/);
+  assert.doesNotMatch(systemOverview, new RegExp(`公开分发应使用被控${'制端'} release`));
+  assert.match(socialBoundary, /远端聊天\/通话客户端[\s\S]*可选/);
+  assert.doesNotMatch(socialBoundary, new RegExp(`完整桌面端保留为控${'制端'}\\/开发端，不作为普通公开下载包`));
 });
 
 test('Nervy pet spritesheet is wired to the renderer contract', () => {
@@ -6245,6 +7261,34 @@ test('desktop runtime keeps optional social and GIF resources lazy for lower mem
   assert.match(renderer, /function setPetGifTrayVisible\(visible\)[\s\S]*if \(!visible\) releasePetGifTray\(\)/);
 });
 
+test('desktop UI keeps the pet float compact and opens settings as a larger client panel', () => {
+  const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'preload.js'), 'utf8');
+  const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'styles.css'), 'utf8');
+  const verifyRender = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'verify-pet-render.js'), 'utf8');
+
+  assert.match(main, /client: \{ width: 1120, height: 820 \}/);
+  assert.match(main, /mode === 'client' \? WINDOW_SIZES\.client : WINDOW_SIZES\.expanded/);
+  assert.match(preload, /setExpanded: \(expanded, mode\) => ipcRenderer\.invoke\('app:set-expanded', expanded, mode\)/);
+  assert.match(renderer, /const CLIENT_SURFACES = new Set\(\['settings', 'onboarding', 'review'\]\)/);
+  assert.match(renderer, /await setExpanded\(true, 'client'\)/);
+  assert.match(renderer, /async function showChat[\s\S]*await setExpanded\(true, 'panel'\)/);
+  assert.match(renderer, /async function showTasks[\s\S]*await setExpanded\(true, 'panel'\)/);
+  assert.match(styles, /#reviewToggle,\s*#onboardingToggle,\s*#openData\s*\{\s*display: none !important;/);
+  assert.match(styles, /\.pet\[data-window-mode="client"\] \.avatar/);
+  assert.match(styles, /\.pet\.expanded\[data-window-mode="client"\] \.panel/);
+  assert.match(styles, /\.pet\[data-window-mode="client"\] \.settings-tab[\s\S]*font-size: 17px/);
+  assert.match(styles, /\.pet\[data-window-mode="client"\] \.settings-group[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /\.pet\[data-window-mode="client"\] input,[\s\S]*font-size: 17px/);
+  assert.match(styles, /\.pet\[data-window-mode="panel"\] #context,[\s\S]*\.pet\[data-window-mode="panel"\] \.pet-stats[\s\S]*display: none/);
+  assert.match(styles, /\.pet\.expanded:not\(\[data-window-mode="client"\]\) #context,[\s\S]*\.pet\.expanded:not\(\[data-window-mode="client"\]\) \.pet-stats[\s\S]*display: none/);
+  assert.match(verifyRender, /const clientWindowMode = domState\.windowMode === 'client'/);
+  assert.match(verifyRender, /clientPanelModeOk/);
+  assert.match(verifyRender, /const abovePetStatsOk = rect =>/);
+  assert.match(verifyRender, /avatarWidth: clientWindowMode \|\| domState\.avatarRect\.width > 100/);
+});
+
 test('desktop startup keeps diagnostics and screen monitor modules lazy', () => {
   const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
   const diagnostics = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'diagnostics.js'), 'utf8');
@@ -6266,6 +7310,52 @@ test('desktop startup keeps diagnostics and screen monitor modules lazy', () => 
   assert.doesNotMatch(diagnostics, /const \{ rtcIceServerSummary \} = require\('\.\/chat-service'\)/);
   assert.match(diagnostics, /function getChatService\(\)/);
   assert.match(diagnostics, /getChatService\(\)\.rtcIceServerSummary/);
+});
+
+test('desktop update push is wired through GitHub release checks and notifications', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'preload.js'), 'utf8');
+  const renderer = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'renderer.js'), 'utf8');
+  const settingsStore = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'settings-store.js'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'index.html'), 'utf8');
+
+  assert.match(packageJson.scripts.check, /src\/update-service\.js/);
+  assert.match(settingsStore, /DEFAULT_UPDATE_FEED_URL/);
+  assert.match(settingsStore, /autoCheckUpdates:\s*true/);
+  assert.match(settingsStore, /updateFeedUrl:\s*DEFAULT_UPDATE_FEED_URL/);
+  assert.match(indexHtml, /更新源 URL[\s\S]*GitHub Release/);
+
+  assert.match(main, /Notification/);
+  assert.match(main, /checkLatestVersion/);
+  assert.match(main, /scheduleAutomaticUpdateChecks/);
+  assert.match(main, /lastNotifiedUpdateVersion/);
+  assert.match(main, /async function downloadUpdateAsset\(update = \{\}\)/);
+  assert.match(main, /app\.getPath\('downloads'\)/);
+  assert.match(main, /safeUpdateAssetName/);
+  assert.match(main, /shell\.openPath\(targetPath\)/);
+  assert.match(main, /const downloaded = await downloadUpdateAsset\(update\)/);
+  assert.match(main, /new Notification\(/);
+  assert.match(main, /点击直接下载最新安装包/);
+  assert.match(main, /ipcMain\.handle\('app:check-update'[\s\S]*checkForUpdate\(options/);
+  assert.match(main, /ipcMain\.handle\('app:open-update-download'[\s\S]*openUpdateDownload/);
+
+  assert.match(preload, /checkUpdate:\s*options => ipcRenderer\.invoke\('app:check-update', options\)/);
+  assert.match(preload, /openUpdateDownload:\s*update => ipcRenderer\.invoke\('app:open-update-download', update\)/);
+
+  assert.match(renderer, /async function checkUpdates\(options = \{\}\)/);
+  assert.match(renderer, /pendingUpdatePrompt/);
+  assert.match(renderer, /lastUpdateNudgeVersion/);
+  assert.match(renderer, /window\.focusPet\.checkUpdate\(\{ notify: options\.notify !== false \}\)/);
+  assert.match(renderer, /showNudge\(\{\s*source:\s*'update'[\s\S]*target:\s*'update'[\s\S]*label:\s*'新'/);
+  assert.match(renderer, /点我直接下载更新/);
+  assert.match(renderer, /if \(target === 'update'\)[\s\S]*window\.focusPet\.openUpdateDownload\(pendingUpdatePrompt\)/);
+  assert.match(renderer, /正在下载 Focus Pet/);
+  assert.match(renderer, /已下载并打开/);
+  assert.match(renderer, /if \(!nudge && \(!expanded \|\| activeSurface === 'home'\)\) message\.textContent = status\.message/);
+  assert.match(renderer, /if \(result\.available && result\.url && options\.manual\)/);
+  assert.match(renderer, /window\.focusPet\.openUpdateDownload\(result\)/);
+  assert.match(renderer, /checkUpdatesButton\.addEventListener\('click', \(\) => checkUpdates\(\{ manual: true \}\)\)/);
 });
 
 test('expanded pet animations and interaction GIF exports are wired', () => {
@@ -6503,10 +7593,63 @@ test('mac packaging preserves Electron framework symlink targets', () => {
   assert.doesNotMatch(source, /fs\.cpSync\(path\.join\(root,\s*'node_modules'\),\s*path\.join\(resourcesApp,\s*'node_modules'\)/);
 });
 
+test('platform packages include only runtime app files', () => {
+  const macPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-macos.js'), 'utf8');
+  const windowsPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-windows.js'), 'utf8');
+
+  for (const source of [macPackager, windowsPackager]) {
+    assert.match(source, /for \(const entry of \['src'\]\)/);
+    assert.match(source, /fs\.writeFileSync\(path\.join\(resourcesApp,\s*'package\.json'\)/);
+    assert.match(source, /main:\s*packageJson\.main/);
+    assert.doesNotMatch(source, /\['src',\s*'scripts'/);
+    assert.doesNotMatch(source, /package-lock\.json/);
+  }
+});
+
+test('app logo assets are generated and wired into platform packages', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+  const macPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-macos.js'), 'utf8');
+  const remoteMacPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-remote-client-macos.js'), 'utf8');
+  const windowsPackager = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'package-windows.js'), 'utf8');
+  const main = fs.readFileSync(path.join(PROJECT_ROOT, 'src', 'main.js'), 'utf8');
+  const iconScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'generate-app-icons.js'), 'utf8');
+  const iconDir = path.join(PROJECT_ROOT, 'src', 'assets', 'app-icon');
+
+  assert.equal(packageJson.scripts['icons:generate'], 'node scripts/generate-app-icons.js');
+  assert.match(packageJson.scripts.check, /node --check scripts\/generate-app-icons\.js/);
+  assert.match(iconScript, /idle-standing\.png/);
+  assert.match(iconScript, /buildPortraitCrop/);
+  assert.match(iconScript, /compositeMasked/);
+  assert.match(iconScript, /buildMinimalBackdrop/);
+  assert.doesNotMatch(iconScript, /drawCircleOutline/);
+  assert.doesNotMatch(iconScript, /drawCheck/);
+  assert.match(iconScript, /iconutil/);
+  assert.match(iconScript, /writeIco/);
+
+  const source = path.join(iconDir, 'icon.png');
+  assert.deepEqual(pngSize(source), { width: 1024, height: 1024 });
+  assert.deepEqual(pngSize(path.join(iconDir, 'icon-16.png')), { width: 16, height: 16 });
+  assert.deepEqual(pngSize(path.join(iconDir, 'icon-512.png')), { width: 512, height: 512 });
+  assert.ok(fs.statSync(path.join(iconDir, 'icon.icns')).size > 4096);
+  assert.ok(fs.statSync(path.join(iconDir, 'icon.ico')).size > 4096);
+
+  assert.match(macPackager, /APP_ICON_ICNS/);
+  assert.match(macPackager, /CFBundleIconFile/);
+  assert.match(remoteMacPackager, /APP_ICON_ICNS/);
+  assert.match(remoteMacPackager, /CFBundleIconFile/);
+  assert.match(windowsPackager, /APP_ICON_ICO/);
+  assert.match(main, /APP_ICON_PNG/);
+  assert.match(main, /icon:\s*APP_ICON_PNG/);
+});
+
 test('mac release assets script plans dmg zip and checksum manifest names', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
   const releaseScriptPath = path.join(PROJECT_ROOT, 'scripts', 'create-mac-release-assets.js');
   assert.equal(packageJson.scripts['release:mac'], 'node scripts/create-mac-release-assets.js');
+  assert.equal(
+    packageJson.scripts['release:mac:remote-client'],
+    'APP_NAME="Focus Pet Client" BUNDLE_ID=dev.focus-pet.client FOCUS_PET_MAC_PACKAGE_SCRIPT=package:mac:remote-client node scripts/create-mac-release-assets.js'
+  );
   assert.match(packageJson.scripts.check, /node --check scripts\/create-mac-release-assets\.js/);
 
   const { buildReleaseAssetPlan } = require(releaseScriptPath);
@@ -6523,6 +7666,8 @@ test('mac release assets script plans dmg zip and checksum manifest names', () =
   assert.equal(path.basename(plan.dmgPath), 'Focus-Pet-2.3.4-mac-arm64.dmg');
   assert.equal(path.basename(plan.manifestPath), 'Focus-Pet-2.3.4-mac-arm64-manifest.json');
   assert.equal(path.basename(plan.stagedApplicationsLink), 'Applications');
+
+  assert.doesNotMatch(packageJson.scripts['release:mac:remote-client'], new RegExp('Control' + 'led'));
 });
 
 test('mac release assets script signs the app before archiving', () => {
@@ -6530,6 +7675,19 @@ test('mac release assets script signs the app before archiving', () => {
 
   assert.match(releaseScript, /function signAppForRelease\(plan/);
   assert.match(releaseScript, /process\.env\.MAC_CODESIGN_IDENTITY \|\| '-'/);
+  assert.match(releaseScript, /FOCUS_PET_MAC_PACKAGE_SCRIPT/);
+  assert.match(releaseScript, /resolvePackageScript/);
   assert.match(releaseScript, /codesign', \[[\s\S]*'--force'[\s\S]*'--deep'[\s\S]*'--sign'/);
   assert.match(releaseScript, /signAppForRelease\(plan\)[\s\S]*createZip\(plan\)/);
+});
+
+test('mac verify script fails release gates on unsigned or unnotarized apps', () => {
+  const verifyScript = fs.readFileSync(path.join(PROJECT_ROOT, 'scripts', 'verify-macos.js'), 'utf8');
+
+  assert.match(verifyScript, /codesignOk = false/);
+  assert.match(verifyScript, /gatekeeperOk = false/);
+  assert.match(verifyScript, /staplerOk = false/);
+  assert.match(verifyScript, /xcrun', \['stapler', 'validate', appPath\]/);
+  assert.match(verifyScript, /const ok = plistOk && executableCount > 0 && codesignOk && gatekeeperOk && staplerOk/);
+  assert.match(verifyScript, /process\.exitCode = 1/);
 });

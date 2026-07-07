@@ -13,7 +13,7 @@
 不覆盖：
 
 - `activity.jsonl`：JSONL 活动日志由 `appendActivityLog()` 和 `appendJsonlWithRetention()` 负责保留周期和原子裁剪，不纳入关键 JSON schema/version 机制。
-- `screen-monitor.jsonl`：屏幕监控 JSONL 日志由 `appendJsonlWithRetention()` 负责保留周期和原子裁剪，不纳入关键 JSON schema/version 机制。
+- `screen-monitor.jsonl`：屏幕检查 JSONL 日志由 `appendJsonlWithRetention()` 负责保留周期和原子裁剪，不纳入关键 JSON schema/version 机制。
 - `focus-pet.log`：分级运行日志由 `writeRuntimeLog()` 和 `appendJsonlWithRetention()` 负责保留周期和原子裁剪，不纳入关键 JSON schema/version 机制。
 - 媒体文件。
 - Markdown 任务导出文件 `today_tasks.md`。
@@ -34,9 +34,9 @@
 
 ## 2.1 本地 JSONL 日志保留周期
 
-`activity.jsonl`、`screen-monitor.jsonl` 和 `focus-pet.log` 默认保留 30 天，可在高级设置中配置为 1-365 天。每次追加新的活动样本、屏幕监控样本或运行日志条目时，系统会读取现有日志、保留窗口内记录、追加新记录，然后写入同目录 `.tmp` 文件并 `rename` 到目标路径。
+`activity.jsonl`、`screen-monitor.jsonl` 和 `focus-pet.log` 默认保留 30 天，可在高级设置中配置为 1-365 天。每次追加新的活动样本、屏幕检查样本或运行日志条目时，系统会读取现有日志、保留窗口内记录、追加新记录，然后写入同目录 `.tmp` 文件并 `rename` 到目标路径。
 
-时间字段缺失或无法解析的历史 JSONL 行会保留，避免旧格式或手工导入数据被静默删除；活动日志和屏幕监控日志中无法解析为 JSON 的行仍会被读取逻辑忽略。运行日志会额外兼容旧的 `[time] message` 文本行，窗口内旧格式行会继续保留并在诊断中标记为 `legacy`。
+时间字段缺失或无法解析的历史 JSONL 行会保留，避免旧格式或手工导入数据被静默删除；活动日志和屏幕检查日志中无法解析为 JSON 的行仍会被读取逻辑忽略。运行日志会额外兼容旧的 `[time] message` 文本行，窗口内旧格式行会继续保留并在诊断中标记为 `legacy`。
 
 ## 3. 原子写策略
 

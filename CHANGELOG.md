@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.0.1 - 2026-07-02
+
+- Adds update notifications backed by GitHub Releases.
+- Adds a tested update service with semver comparison, GitHub Release asset selection, and fallback handling for API rate limits.
+- Adds main-process automatic update checks and system notifications that open the Release download page on click.
+- Documents that update installation remains user-driven and can be disabled in settings.
+
 ## v1.0.0 - 2026-07-02
 
 - Initial GitHub release for Focus Pet.

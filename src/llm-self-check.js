@@ -1,4 +1,4 @@
-const { monitorConfig } = require('./screen-monitor');
+const { monitorConfig, screenCheckCloudConfig } = require('./screen-monitor');
 const { reviewLlmConfig } = require('./review-llm');
 const { authHeaders } = require('./llm-provider');
 
@@ -12,13 +12,24 @@ const FIELD_LABELS = {
 const SERVICES = [
   {
     id: 'screen-monitor',
-    title: '屏幕监控 LLM',
+    title: '屏幕检查 LLM',
     config(settings, env) {
-      return monitorConfig(settings, env);
+      const direct = monitorConfig(settings, env);
+      if (direct.configured || settings.screenCheckTransport === 'direct') return direct;
+      const cloud = screenCheckCloudConfig(settings, env);
+      if (cloud.configured) {
+        return {
+          ...cloud,
+          model: 'focus-pet-cloud-screen-check',
+          usesScreenCheckCloud: true
+        };
+      }
+      return direct;
     },
-    endpointHint: '在屏幕监控的 LLM Endpoint 填入完整 Chat Completions 地址，例如 https://api.example.com/v1/chat/completions。',
-    modelHint: '在 LLM Model 填入支持文本 ping、并且实际监控时支持图片输入的模型名。',
-    apiKeyHint: '在启动应用前设置 FOCUS_PET_LLM_API_KEY；如果使用 OpenAI-compatible 默认 key，也可以设置 OPENAI_API_KEY。',
+    endpointHint: '在屏幕检查的 LLM Endpoint 填入 StepFun 根地址或完整 Chat Completions 地址，例如 https://api.stepfun.com/v1。',
+    modelHint: '在 LLM Model 填入支持文本 ping、并且正式检查时支持图片输入的模型名，例如 step-3.7-flash。',
+    apiKeyHint: '在启动应用前设置 FOCUS_PET_SCREEN_LLM_API_KEY、FOCUS_PET_STEPFUN_API_KEY、STEPFUN_API_KEY 或 STEP_API_KEY；如果使用 OpenAI-compatible 默认 key，也可以设置 OPENAI_API_KEY。',
+    cloudApiKeyHint: '在 Focus Pet Cloud 后端设置 FOCUS_PET_CLOUD_STEPFUN_API_KEY，或通过 Modal Secret 注入后重新部署 Cloud。',
     localEndpointHint: '当前为仅本地模式，请把 endpoint 改成 localhost、127.0.0.1 或本机 Ollama 地址。'
   },
   {
@@ -74,6 +85,16 @@ function minimalChatBody(model) {
   };
 }
 
+function minimalScreenCheckBody() {
+  return {
+    image: {
+      dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lw0C0QAAAABJRU5ErkJggg=='
+    },
+    currentTask: { text: 'Focus Pet LLM 自检' },
+    frontmost: { app: 'Focus Pet', title: 'LLM 自检' }
+  };
+}
+
 function baseCheck(service, config) {
   return {
     id: service.id,
@@ -85,6 +106,7 @@ function baseCheck(service, config) {
     provider: config.provider || 'openai-compatible',
     localProvider: Boolean(config.localProvider),
     cloudMode: config.cloudMode || 'allowed',
+    usesScreenCheckCloud: Boolean(config.usesScreenCheckCloud),
     missing: Array.isArray(config.missing) ? config.missing : [],
     requestSent: false
   };
@@ -171,6 +193,23 @@ async function readResponseDetail(response) {
   return cleanText(await response.text().catch(() => ''));
 }
 
+function cloudScreenCheckFailure(service, config, payload = {}) {
+  const status = cleanText(payload.status || 'request-failed', 80);
+  const reason = cleanText(payload.reason || payload.error || 'Focus Pet Cloud 屏幕检查未通过。', 220);
+  const missing = Array.isArray(payload.missing) ? payload.missing.map(item => String(item)).filter(Boolean) : [];
+  return {
+    ...baseCheck(service, { ...config, missing }),
+    ok: false,
+    status,
+    requestSent: true,
+    summary: `${service.title} 通过 Focus Pet Cloud 返回失败：${reason}`,
+    detail: reason,
+    nextSteps: missing.includes('apiKey')
+      ? [service.cloudApiKeyHint || service.apiKeyHint]
+      : ['检查 Focus Pet Cloud /api/screen-check 服务状态、后端环境变量和运行日志。']
+  };
+}
+
 async function testService(service, settings, env, fetchImpl, timeoutMs) {
   const config = service.config(settings, env);
   if (config.missing?.length) return configFailure(service, config);
@@ -182,7 +221,7 @@ async function testService(service, settings, env, fetchImpl, timeoutMs) {
       'content-type': 'application/json',
       ...authHeaders(config.apiKey)
     },
-    body: JSON.stringify(minimalChatBody(config.model))
+    body: JSON.stringify(config.usesScreenCheckCloud ? minimalScreenCheckBody() : minimalChatBody(config.model))
   };
 
   let response;
@@ -214,9 +253,10 @@ async function testService(service, settings, env, fetchImpl, timeoutMs) {
     };
   }
 
+  let payload = null;
   if (typeof response.json === 'function') {
     try {
-      await response.json();
+      payload = await response.json();
     } catch (error) {
       return {
         ...baseCheck(service, config),
@@ -232,20 +272,27 @@ async function testService(service, settings, env, fetchImpl, timeoutMs) {
       };
     }
   }
+  if (config.usesScreenCheckCloud && payload && typeof payload === 'object' && payload.ok === false) {
+    return cloudScreenCheckFailure(service, config, payload);
+  }
 
   return {
     ...baseCheck(service, config),
     ok: true,
     status: 'connected',
     requestSent: true,
-    summary: config.localProvider
+    summary: config.usesScreenCheckCloud
+      ? `${service.title} 已通过 Focus Pet Cloud 连通。`
+      : config.localProvider
       ? `${service.title} 本地模型连通，endpoint 和 model 可用。`
       : `${service.title} 连通，endpoint、model、API key 都可用。`,
-    detail: config.apiKeyRequired === false
+    detail: config.usesScreenCheckCloud
+      ? '已发送一张 1x1 测试图片到 Cloud 屏幕检查接口；桌面端无需保存 API key。'
+      : config.apiKeyRequired === false
       ? '已发送最小文本 ping 请求，服务返回 2xx 响应；本地提供方无需 API key。'
       : '已发送最小文本 ping 请求，服务返回 2xx 响应。',
     nextSteps: service.id === 'screen-monitor'
-      ? ['连通性正常；如果正式监控失败，再检查屏幕录制权限和模型是否支持图片输入。']
+      ? ['连通性正常；如果正式检查失败，再检查屏幕录制权限和模型是否支持图片输入。']
       : ['连通性正常；保存设置后可以回到复盘页触发一次复盘。']
   };
 }

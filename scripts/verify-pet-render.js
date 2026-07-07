@@ -1850,6 +1850,47 @@ const scenarios = [
     `
   },
   {
+    name: 'avatar-petting-gesture',
+    windowSize: { width: 540, height: 520 },
+    expectedVibe: 'guarded',
+    expectPettingGesture: true,
+    setup: `
+      await (async () => {
+        const pet = document.querySelector('#pet');
+        expanded = true;
+        pet.classList.remove('compact');
+        pet.classList.add('expanded');
+        pet.classList.remove('action-feed', 'action-clean', 'action-study', 'action-work', 'action-play', 'action-rest', 'is-petting');
+        if (petActionTimer) {
+          clearTimeout(petActionTimer);
+          petActionTimer = null;
+        }
+        petAnimationLocked = false;
+        document.querySelector('#homeActions').classList.remove('hidden');
+        localStorage.setItem('focusPetVitals:v1', JSON.stringify({ mood: 56, energy: 52, bond: 22, reason: 'qa avatar petting gesture' }));
+        loadStoredPetVitals();
+        lastTouchVitalAt = 0;
+        updatePetStats();
+        window.__qaFocusPetCalls.clear();
+        await startAvatarDrag({
+          button: 0,
+          pointerId: 41,
+          pointerType: 'mouse',
+          screenX: 92,
+          screenY: 128,
+          clientX: 92,
+          clientY: 128,
+          preventDefault() {}
+        });
+        moveAvatarDrag({ pointerId: 41, pointerType: 'mouse', screenX: 110, screenY: 126, clientX: 110, clientY: 126 });
+        moveAvatarDrag({ pointerId: 41, pointerType: 'mouse', screenX: 88, screenY: 130, clientX: 88, clientY: 130 });
+        moveAvatarDrag({ pointerId: 41, pointerType: 'mouse', screenX: 112, screenY: 127, clientX: 112, clientY: 127 });
+        moveAvatarDrag({ pointerId: 41, pointerType: 'mouse', screenX: 90, screenY: 129, clientX: 90, clientY: 129 });
+        endAvatarDrag({ type: 'pointerup', pointerId: 41 });
+      })();
+    `
+  },
+  {
     name: 'touch-fragile-feedback',
     windowSize: { width: 540, height: 520 },
     expectedVibe: 'fragile',
@@ -2760,6 +2801,16 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     }
   }
   await delay(120);
+  const windowMode = await browserWindow.webContents.executeJavaScript(`
+    document.querySelector('#pet')?.dataset.windowMode || 'compact'
+  `).catch(() => 'compact');
+  const effectiveWindowSize = windowMode === 'client'
+    ? { width: 1120, height: 820 }
+    : scenario.windowSize;
+  if (effectiveWindowSize.width !== scenario.windowSize.width || effectiveWindowSize.height !== scenario.windowSize.height) {
+    browserWindow.setSize(effectiveWindowSize.width, effectiveWindowSize.height, false);
+    await delay(180);
+  }
 
   const domState = await browserWindow.webContents.executeJavaScript(`
     (() => {
@@ -2889,6 +2940,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
       });
       return {
         petClasses: Array.from(pet.classList),
+        windowMode: pet.dataset.windowMode || '',
         bubble: {
           rect: {
             left: bubbleRect.left,
@@ -3382,7 +3434,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
   const image = await browserWindow.webContents.capturePage();
   fs.writeFileSync(screenshotPath, image.toPNG());
   if (scenario.name === 'compact') fs.writeFileSync(legacyScreenshotPath, image.toPNG());
-  const pixelStats = countOpaquePixels(image, domState.avatarRect, scenario.windowSize);
+  const pixelStats = countOpaquePixels(image, domState.avatarRect, effectiveWindowSize);
   const careCooldownHomeOk = (impact, meta = '刚休息过', title = `刚刚休息过，${impact}；约30秒后再继续。打开照料菜单`) => (
     domState.petStateSummary === '刚照料过，先观察状态'
     && domState.petCareCue === '观察变化'
@@ -3421,6 +3473,11 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
       && domState.careGuidance.title === `观察状态：${reason}，${impact}；约30秒后再继续。`
     );
   };
+  const abovePetStatsOk = rect => (
+    domState.petStatsDisplay === 'none'
+    || domState.careMenu.statsRect.width === 0
+    || rect.bottom <= domState.careMenu.statsRect.top - 4
+  );
   const careMenuCooldownObservationOk = !scenario.expectCareMenuCooldownObservation || (
     !domState.careMenu.hidden
     && domState.homeCare.expanded === 'true'
@@ -3544,7 +3601,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.needs.energy === 'primary'
     && domState.careFeedback.needs.mood === 'stable'
     && domState.careFeedback.needs.bond === 'stable'
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const careMenuLowMoodOk = !scenario.expectCareMenuLowMood || (
     !domState.careMenu.hidden
@@ -3580,7 +3637,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.bondLabel === '亲密·熟悉'
     && domState.careFeedback.bondStage === 'familiar'
     && domState.careFeedback.needs.mood === 'primary'
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const careMenuLowBondOk = !scenario.expectCareMenuLowBond || (
     !domState.careMenu.hidden
@@ -3620,7 +3677,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.bondLabel === '亲密·试探'
     && domState.careFeedback.bondStage === 'new'
     && domState.careFeedback.needs.bond === 'primary'
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const careMenuFamiliarBondPriorityOk = !scenario.expectCareMenuFamiliarBondPriority || (
     !domState.careMenu.hidden
@@ -3734,7 +3791,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.vitalDeltas.mood.hidden
     && domState.careFeedback.vitalDeltas.energy.hidden
     && domState.careFeedback.vitalDeltas.bond.hidden
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const careMenuInsightOk = !scenario.expectCareMenuInsight || (
     !domState.careMenu.hidden
@@ -3744,7 +3801,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careMenu.insight.lineClamp === '2'
     && domState.careMenu.insight.whiteSpace === 'normal'
     && domState.careMenu.rect.top >= domState.messageRect.bottom + 4
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const compoundRestFollowupOk = !scenario.expectCompoundRestFollowup || (
     domState.careMenu.hidden
@@ -3981,7 +4038,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.homeCare.title.includes('现在适合轻互动')
     && domState.homeCare.title.includes('亲密正在变熟')
     && domState.homeCare.title.includes('预计亲密增加，也会照顾心情')
-    && domState.homeCare.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.homeCare.rect)
   );
   const homeStudyEnergyTradeoffOk = !scenario.expectHomeStudyEnergyTradeoff || (
     domState.surface === 'home'
@@ -4018,7 +4075,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.energyStage === 'ready'
     && domState.careFeedback.bondLabel === '亲密·亲近'
     && domState.careFeedback.bondStage === 'close'
-    && domState.homeCare.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.homeCare.rect)
   );
   const homeWorkEnergyDropPreviewOk = !scenario.expectHomeWorkEnergyDropPreview || (
     domState.surface === 'home'
@@ -4060,7 +4117,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careGuidance.previewTitle === '亲密增加 · 精力降到低电（心+2 精-10 亲+4 · 精降低电，亲到亲近）'
     && domState.careGuidance.previewAria === '预计变化：亲密增加 · 精力降到低电（心+2 精-10 亲+4 · 精降低电，亲到亲近）'
     && domState.careGuidance.title === '执行推荐：打工。盯当前任务，预计亲密增加 · 精力降到低电（心+2 精-10 亲+4 · 精降低电，亲到亲近）。'
-    && domState.homeCare.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.homeCare.rect)
   );
   const careGuidanceShortcutOk = !scenario.expectCareGuidanceShortcut || (
     domState.careGuidance.before?.display === 'grid'
@@ -4877,7 +4934,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careMenu.buttons[0]?.effectCount === 2
     && domState.careFeedback.focus === 'bond'
     && domState.careFeedback.focusSource === 'inspect'
-    && domState.careMenu.rect.bottom <= domState.careMenu.statsRect.top - 4
+    && abovePetStatsOk(domState.careMenu.rect)
   );
   const vitalInsightRepeatOk = !scenario.expectVitalInsightRepeat || (
     domState.surface === 'home'
@@ -5067,7 +5124,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
   const offlineRestFeedbackOk = !scenario.expectOfflineRestFeedback || (
     domState.surface === 'home'
     && domState.vibe === 'steady'
-    && domState.petStatsDisplay === 'grid'
+    && domState.petStatsDisplay === 'none'
     && domState.petStateSummary === '离开后恢复了精力'
     && domState.petCareCue === '先接回节奏'
     && domState.careFeedback.reason.includes('休息后精力回来了')
@@ -5139,7 +5196,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.settings.intensity === 'normal'
     && domState.vibe === 'steady'
     && domState.contextDisplay === 'none'
-    && domState.message === '我看着设置面板，提醒节奏调顺就继续任务。'
+    && domState.message === '设置客户端已打开，保存后立即生效。'
     && domState.petStateSummary === '正在看着设置节奏'
     && domState.petCareCue === '调提醒节奏'
     && domState.careFeedback.reason.includes('打开设置面板')
@@ -5164,13 +5221,13 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.onboarding.text.includes('3 分钟完成基础模式')
     && domState.onboarding.text.includes('任务 + 宠物 + 前台 App 判断')
     && domState.onboarding.text.includes('工作/学习/娱乐关键词')
-    && domState.onboarding.text.includes('屏幕 LLM')
+    && domState.onboarding.text.includes('屏幕检查')
     && domState.onboarding.text.includes('社交监督')
     && domState.onboarding.text.includes('WebRTC')
-    && domState.onboarding.text.includes('会采集什么')
-    && domState.onboarding.text.includes('不会采集什么')
-    && domState.onboarding.text.includes('数据保存在哪里')
-    && domState.onboarding.text.includes('是否会外发')
+    && domState.onboarding.text.includes('采集')
+    && domState.onboarding.text.includes('不做')
+    && domState.onboarding.text.includes('保存')
+    && domState.onboarding.text.includes('外发')
     && domState.onboarding.overflowingNodes.length === 0
     && domState.message === '先选一个模式，基础模式三分钟内就能开始用。'
   );
@@ -5246,6 +5303,21 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.careFeedback.focusSource === 'touch'
     && domState.vitalFocusAction.button === '继续互动'
   );
+  const pettingGestureOk = !scenario.expectPettingGesture || (
+    domState.surface === 'home'
+    && domState.petClasses.includes('expanded')
+    && domState.petClasses.includes('is-petting')
+    && domState.petClasses.includes('action-clean')
+    && domState.avatarA11y.aria.includes('轻抚')
+    && domState.message === '它犹豫了一下，还是靠近了一点。'
+    && domState.careFeedback.reason.includes('关系还在试探')
+    && domState.careFeedback.delta === '心+1 亲+3'
+    && domState.careFeedback.focus === 'bond'
+    && domState.careFeedback.focusSource === 'touch'
+    && !domState.focusPetCalls.some(call => call.name === 'setWindowPosition')
+    && domState.focusPetCalls.some(call => call.name === 'setClickThrough' && call.args[0] === false)
+    && domState.focusPetCalls.some(call => call.name === 'setClickThrough' && call.args[0] === true)
+  );
   const touchFragileFeedbackOk = !scenario.expectTouchFragileFeedback || (
     domState.surface === 'home'
     && domState.vibe === 'fragile'
@@ -5314,7 +5386,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
   const bondMilestoneOk = !scenario.expectBondMilestone || (
     domState.surface === 'home'
     && domState.vibe === 'steady'
-    && domState.petStatsDisplay === 'grid'
+    && domState.petStatsDisplay === 'none'
     && domState.careFeedback.milestone === 'true'
     && domState.careFeedback.recent === '关系更亲近了'
     && !domState.careFeedback.recentHidden
@@ -6023,6 +6095,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && domState.avatarA11y.aria.includes('看着屏幕')
     && domState.avatarA11y.aria.includes('任务偏多')
   );
+  const clientWindowMode = domState.windowMode === 'client';
   const interactiveSurface = ['tasks', 'review', 'settings', 'chat'].includes(domState.surface);
   const activeInteractionPanel = domState.surface === 'chat' ? domState.chatPanelRect : domState.panel;
   const activePanelVisible = activeInteractionPanel
@@ -6030,7 +6103,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     && activeInteractionPanel.display !== 'none'
     && activeInteractionPanel.rect.width > 0
     && activeInteractionPanel.rect.height > 0;
-  const avatarBesideInteractivePanelOk = !interactiveSurface || !activePanelVisible || (
+  const avatarBesideInteractivePanelOk = clientWindowMode || !interactiveSurface || !activePanelVisible || (
     rectRangesOverlap(domState.avatarRect.top, domState.avatarRect.bottom, activeInteractionPanel.rect.top, activeInteractionPanel.rect.bottom)
     && (
       domState.avatarRect.left >= activeInteractionPanel.rect.right + 2
@@ -6066,11 +6139,18 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     { visible: !domState.careMenu.hidden, rect: domState.careMenu.rect },
     { visible: domState.petStatsDisplay !== 'none', rect: domState.careMenu.statsRect }
   ];
-  const expandedHtmlBesidePetOk = !domState.petClasses.includes('expanded') || expandedHtmlRects.every(item => (
+  const expandedHtmlBesidePetOk = clientWindowMode || !domState.petClasses.includes('expanded') || expandedHtmlRects.every(item => (
     !item.visible
     || item.rect.width === 0
     || item.rect.left >= 150
   ));
+  const clientPanelModeOk = !clientWindowMode || (
+    activePanelVisible
+    && domState.panel.rect.left <= 24
+    && domState.panel.rect.width >= 760
+    && domState.bubble.rect.left <= 24
+    && domState.bubble.rect.width >= 760
+  );
   const feedbackPunctuationOk = !/[。.!！] ·/.test(domState.careFeedback.reason);
   const careMenuContextOk = domState.careMenu.hidden
     || domState.contextDisplay === 'none'
@@ -6080,11 +6160,12 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
   const checks = {
     spritePath: domState.spriteBackgroundImage.includes('nervy-sci-fi-kid/spritesheet.webp'),
     spriteSize: domState.spriteBackgroundSize === '1536px 6240px',
-    avatarWidth: domState.avatarRect.width > 100,
-    avatarHeight: domState.avatarRect.height > 100,
-    opaquePixels: pixelStats.opaquePixels > 1000,
-    coloredPixels: pixelStats.coloredPixels > 500,
+    avatarWidth: clientWindowMode || domState.avatarRect.width > 100,
+    avatarHeight: clientWindowMode || domState.avatarRect.height > 100,
+    opaquePixels: clientWindowMode || pixelStats.opaquePixels > 1000,
+    coloredPixels: clientWindowMode || pixelStats.coloredPixels > 500,
     renderErrors: domState.renderErrors.length === 0,
+    clientPanelModeOk,
     expandedHtmlBesidePetOk,
     avatarBesideInteractivePanelOk,
     vibeOk,
@@ -6153,6 +6234,7 @@ async function verifyScenario(browserWindow, scenario, { reload = false } = {}) 
     taskSurfaceRepeatOk,
     touchFeedbackOk,
     avatarKeyboardTouchOk,
+    pettingGestureOk,
     touchFragileFeedbackOk,
     touchRepeatFeedbackOk,
     taskClearOk,

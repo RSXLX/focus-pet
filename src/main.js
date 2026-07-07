@@ -1,11 +1,14 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, screen, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, Notification, clipboard, desktopCapturer, ipcMain, screen, session, shell, systemPreferences } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { Readable } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 const focus = require('./focus');
 const { writeRuntimeLog, sanitizeLogText } = require('./runtime-logger');
 const { appendJsonlWithRetention } = require('./jsonl-retention');
 const { applyLaunchAtLogin, launchAtLoginState } = require('./launch-login');
 const { platformSettingsProfile, platformSettingsTarget } = require('./platform-support');
+const { DEFAULT_UPDATE_FEED_URL, DEFAULT_UPDATE_PAGE_URL, checkLatestVersion } = require('./update-service');
 const packageJson = require('../package.json');
 
 let mainWindow;
@@ -16,8 +19,15 @@ let chatRuntime = null;
 let diagnosticsModule = null;
 let screenMonitorModule = null;
 let llmSelfCheckModule = null;
+let cloudClientModule = null;
+let updateCheckTimer = null;
+let updateStartupTimer = null;
+let lastNotifiedUpdateVersion = '';
 const STOP_MARKER_PATH = path.join(focus.DATA_DIR, 'focus-pet.stop');
 const ERROR_LOG_PATH = path.join(path.resolve(__dirname, '..'), 'docs', 'errorThing.md');
+const APP_ICON_PNG = path.join(__dirname, 'assets', 'app-icon', 'icon.png');
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const UPDATE_STARTUP_DELAY_MS = 15_000;
 const PET_GIF_DIR = path.join(__dirname, 'assets', 'pets', 'nervy-sci-fi-kid', 'gifs');
 const PET_GIF_ASSETS = [
   { key: 'tap-heart', label: '摸摸爱心', file: 'tap-heart.gif', sourceType: 'generated-image-pack' },
@@ -46,7 +56,8 @@ const PET_GIF_ASSETS = [
 
 const WINDOW_SIZES = {
   compact: { width: 220, height: 270 },
-  expanded: { width: 540, height: 520 }
+  expanded: { width: 540, height: 520 },
+  client: { width: 1120, height: 820 }
 };
 
 function getChatService() {
@@ -82,6 +93,11 @@ function getScreenMonitor() {
 function getLlmSelfCheck() {
   if (!llmSelfCheckModule) llmSelfCheckModule = require('./llm-self-check');
   return llmSelfCheckModule;
+}
+
+function getCloudClient() {
+  if (!cloudClientModule) cloudClientModule = require('./cloud-client');
+  return cloudClientModule;
 }
 
 function logMain(message, level = 'info') {
@@ -250,18 +266,25 @@ function publicScreenshot(screenshot = null, media = null) {
   };
 }
 
-function publishScreenActivity(result = {}) {
-  if (!result.ok || !result.screenshot?.dataUrl) return null;
+function shouldPublishScreenActivity(settings = {}) {
+  return settings.socialActivityShareLevel === 'screen-summary';
+}
+
+function publishScreenActivity(result = {}, options = {}) {
+  if (!result.ok) return null;
   try {
     ensureChatServiceStarted();
     const chatService = getChatService();
-    const image = parseDataUrl(result.screenshot.dataUrl);
-    if (!image) throw new Error('屏幕截图 data URL 格式无效');
-    const media = chatService.saveMedia({
-      name: `screen-analysis-${new Date(result.time || Date.now()).toISOString().replace(/[:.]/g, '-')}.png`,
-      mimeType: image.mimeType || result.screenshot.mimeType || 'image/png',
-      data: image.data
-    });
+    let media = null;
+    if (options.includeScreenshot && result.screenshot?.dataUrl) {
+      const image = parseDataUrl(result.screenshot.dataUrl);
+      if (!image) throw new Error('屏幕截图 data URL 格式无效');
+      media = chatService.saveMedia({
+        name: `screen-analysis-${new Date(result.time || Date.now()).toISOString().replace(/[:.]/g, '-')}.png`,
+        mimeType: image.mimeType || result.screenshot.mimeType || 'image/png',
+        data: image.data
+      });
+    }
     return chatService.publishActivitySnapshot({
       status: result.status,
       activity: result.activity,
@@ -287,7 +310,7 @@ function publishScreenActivity(result = {}) {
     appendErrorThing({
       description: `屏幕分析结果同步到聊天失败：${error.message}`,
       location: 'src/main.js publishScreenActivity',
-      context: `status=${result.status || 'unknown'}, activity=${result.activity || '无'}, hasScreenshot=${Boolean(result.screenshot?.dataUrl)}`,
+      context: `status=${result.status || 'unknown'}, activity=${result.activity || '无'}, hasScreenshot=${Boolean(result.screenshot?.dataUrl)}, includeScreenshot=${Boolean(options.includeScreenshot)}`,
       possibleCause: '截图 data URL 异常、聊天媒体目录写入失败、媒体大小超过限制，或聊天状态文件不可写。',
       status: '未解决'
     });
@@ -319,6 +342,7 @@ function createWindow() {
     skipTaskbar: true,
     hasShadow: false,
     show: false,
+    icon: APP_ICON_PNG,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -360,33 +384,111 @@ function installMediaPermissionHandler() {
   });
 }
 
-function compareVersions(left, right) {
-  const a = String(left || '0.0.0').split('.').map(Number);
-  const b = String(right || '0.0.0').split('.').map(Number);
-  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
-    const diff = (a[index] || 0) - (b[index] || 0);
-    if (diff) return diff;
+function safeExternalUrl(value) {
+  const text = String(value || '').trim();
+  if (!/^https?:\/\//i.test(text)) return '';
+  try {
+    return new URL(text).toString();
+  } catch {
+    return '';
   }
-  return 0;
 }
 
-async function checkForUpdate() {
-  const settings = focus.getSettings();
-  if (!settings.updateFeedUrl) {
-    return { ok: false, reason: '未配置更新源', currentVersion: packageJson.version };
+function safeUpdateAssetName(update = {}, url = '') {
+  const name = String(update.assetName || '').trim()
+    || decodeURIComponent(path.basename(new URL(url).pathname || ''));
+  const clean = name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (/\.(dmg|zip|pkg)$/i.test(clean)) return clean;
+  const version = String(update.latestVersion || 'latest').replace(/[^A-Za-z0-9._-]+/g, '-');
+  return `Focus-Pet-${version}.dmg`;
+}
+
+function uniqueDownloadPath(dir, fileName) {
+  const parsed = path.parse(fileName);
+  let candidate = path.join(dir, fileName);
+  for (let index = 1; fs.existsSync(candidate); index += 1) {
+    candidate = path.join(dir, `${parsed.name}-${index}${parsed.ext}`);
   }
-  const response = await fetch(settings.updateFeedUrl, { cache: 'no-store' });
-  if (!response.ok) throw new Error(`更新源请求失败：${response.status}`);
-  const payload = await response.json();
-  const latestVersion = String(payload.version || payload.latestVersion || '');
-  return {
-    ok: true,
+  return candidate;
+}
+
+async function downloadUpdateAsset(update = {}) {
+  const url = safeExternalUrl(update.downloadUrl);
+  if (!url) return null;
+  const downloadsDir = app.getPath('downloads') || focus.DATA_DIR;
+  fs.mkdirSync(downloadsDir, { recursive: true });
+  const fileName = safeUpdateAssetName(update, url);
+  const targetPath = uniqueDownloadPath(downloadsDir, fileName);
+  const response = await fetch(url, {
+    cache: 'no-store',
+    headers: { 'user-agent': `FocusPetUpdater/${packageJson.version}` }
+  });
+  if (!response?.ok) throw new Error(`安装包下载失败：${response?.status || 'unknown'}`);
+  if (response.body) {
+    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(targetPath, { flags: 'wx' }));
+  } else {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    fs.writeFileSync(targetPath, buffer, { flag: 'wx' });
+  }
+  const openError = await shell.openPath(targetPath);
+  if (openError) throw new Error(openError);
+  return { downloaded: true, filePath: targetPath, fileName, url };
+}
+
+async function openUpdateDownload(update = {}) {
+  const downloaded = await downloadUpdateAsset(update);
+  if (downloaded) return { ok: true, ...downloaded };
+  const url = safeExternalUrl(update.pageUrl || update.url || DEFAULT_UPDATE_PAGE_URL);
+  if (!url) return false;
+  await shell.openExternal(url);
+  return { ok: true, downloaded: false, url };
+}
+
+function showUpdateNotification(result = {}) {
+  if (!result.available || !result.latestVersion) return false;
+  if (lastNotifiedUpdateVersion === result.latestVersion) return false;
+  lastNotifiedUpdateVersion = result.latestVersion;
+  if (typeof Notification.isSupported === 'function' && !Notification.isSupported()) return false;
+
+  const notification = new Notification({
+    title: 'Focus Pet 有新版本',
+    body: `${result.latestVersion} 已发布，点击直接下载最新安装包。`,
+    icon: APP_ICON_PNG
+  });
+  notification.on('click', () => {
+    openUpdateDownload(result).catch(error => logMain(`open update download failed: ${error.stack || error.message}`, 'warn'));
+  });
+  notification.show();
+  return true;
+}
+
+async function checkForUpdate(options = {}) {
+  const settings = focus.getSettings();
+  const result = await checkLatestVersion({
     currentVersion: packageJson.version,
-    latestVersion,
-    available: compareVersions(latestVersion, packageJson.version) > 0,
-    url: payload.url || payload.downloadUrl || '',
-    notes: payload.notes || ''
+    feedUrl: settings.updateFeedUrl || DEFAULT_UPDATE_FEED_URL,
+    platform: process.platform,
+    arch: process.arch
+  });
+  const notified = options.notify ? showUpdateNotification(result) : false;
+  return { ...result, notified };
+}
+
+function scheduleAutomaticUpdateChecks(settings = focus.getSettings()) {
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  if (updateStartupTimer) clearTimeout(updateStartupTimer);
+  updateCheckTimer = null;
+  updateStartupTimer = null;
+  if (!settings.autoCheckUpdates) return;
+
+  const run = () => {
+    checkForUpdate({ notify: true, source: 'auto' })
+      .catch(error => logMain(`auto update check failed: ${error.stack || error.message}`, 'warn'));
   };
+  updateCheckTimer = setInterval(run, UPDATE_CHECK_INTERVAL_MS);
+  updateStartupTimer = setTimeout(run, UPDATE_STARTUP_DELAY_MS);
+  if (typeof updateCheckTimer.unref === 'function') updateCheckTimer.unref();
+  if (typeof updateStartupTimer.unref === 'function') updateStartupTimer.unref();
 }
 
 function petGifAssetPath(asset) {
@@ -490,7 +592,9 @@ async function sampleScreenMonitor(options = {}) {
       ? await focus.getDailyReview({ screenAnalysis: result, fetchImpl: fetch })
       : null;
     const withContext = { ...result, currentTask, frontmost, pipelineReview };
-    const sharedActivity = publishScreenActivity(withContext);
+    const sharedActivity = shouldPublishScreenActivity(settings)
+      ? publishScreenActivity(withContext, { includeScreenshot: false })
+      : null;
     const publicResult = {
       ...withContext,
       screenshot: publicScreenshot(withContext.screenshot, sharedActivity?.media),
@@ -525,6 +629,7 @@ app.whenReady().then(() => {
   installMediaPermissionHandler();
   applyLaunchAtLogin(app, focus.getSettings(), { path: process.execPath });
   createWindow();
+  scheduleAutomaticUpdateChecks(focus.getSettings());
 
   ipcMain.handle('focus:get-status', () => focus.getStatus());
   ipcMain.handle('focus:get-review', () => focus.getDailyReview());
@@ -552,6 +657,7 @@ app.whenReady().then(() => {
     const settings = focus.updateSettings(patch);
     syncChatSettingsIfLoaded(settings);
     const launchState = applyLaunchAtLogin(app, settings, { path: process.execPath });
+    scheduleAutomaticUpdateChecks(settings);
     return {
       ...settings,
       ...launchState,
@@ -573,7 +679,8 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('app:open-accessibility-settings', () => openPlatformSettings('accessibility'));
   ipcMain.handle('app:open-screen-recording-settings', () => openPlatformSettings('screen-recording'));
-  ipcMain.handle('app:check-update', () => checkForUpdate());
+  ipcMain.handle('app:check-update', (_event, options = {}) => checkForUpdate(options));
+  ipcMain.handle('app:open-update-download', (_event, update = {}) => openUpdateDownload(update));
   ipcMain.handle('app:get-pet-gifs', () => listPetGifs());
   ipcMain.handle('app:share-pet-gif', (_event, key) => sharePetGif(key));
   ipcMain.handle('app:open-pet-gif-folder', () => openPetGifFolder());
@@ -583,9 +690,15 @@ app.whenReady().then(() => {
     return true;
   });
   ipcMain.handle('app:open-data-dir', () => shell.openPath(focus.DATA_DIR));
-  ipcMain.handle('app:set-expanded', (_event, expanded) => {
+  ipcMain.handle('app:copy-text', (_event, text) => {
+    clipboard.writeText(String(text || ''));
+    return true;
+  });
+  ipcMain.handle('app:set-expanded', (_event, expanded, mode = 'panel') => {
     if (!mainWindow) return;
-    const { width, height } = expanded ? WINDOW_SIZES.expanded : WINDOW_SIZES.compact;
+    const { width, height } = expanded
+      ? (mode === 'client' ? WINDOW_SIZES.client : WINDOW_SIZES.expanded)
+      : WINDOW_SIZES.compact;
     const bounds = mainWindow.getBounds();
     mainWindow.setBounds(clampWindowBounds(bounds.x, bounds.y, width, height), true);
   });
@@ -601,6 +714,12 @@ app.whenReady().then(() => {
     mainWindow.setPosition(bounds.x, bounds.y, false);
   });
   ipcMain.handle('screen-monitor:sample', (_event, options) => sampleScreenMonitor(options));
+  ipcMain.handle('cloud:get-state', () => getCloudClient().getCloudMe({ fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:register', (_event, input) => getCloudClient().registerCloudUser(input, { fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:add-friend', (_event, friendCode) => getCloudClient().addCloudFriend(friendCode, { fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:send-message', (_event, message) => getCloudClient().sendCloudMessage(message, { fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:refresh', () => getCloudClient().getCloudMe({ fetchImpl: fetch, settings: focus.getSettings() }));
+  ipcMain.handle('cloud:clear-account', () => getCloudClient().accountToChatState(getCloudClient().clearCloudAccount({ settings: focus.getSettings() }), null, { settings: focus.getSettings() }));
   ipcMain.handle('chat:get-state', () => {
     ensureChatServiceStarted();
     return getChatService().publicState();
@@ -643,6 +762,8 @@ app.on('before-quit', () => {
   requestSupervisorStop('quit');
   isQuitting = true;
   if (keepAliveTimer) clearInterval(keepAliveTimer);
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  if (updateStartupTimer) clearTimeout(updateStartupTimer);
   stopChatService();
 });
 

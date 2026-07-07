@@ -181,14 +181,14 @@
 - 为聊天状态补 `version`。
 - 为关键 JSON 写入封装原子写。
 - 加载失败时保留损坏文件副本并恢复默认状态。
-- 活动日志、屏幕监控日志和运行日志默认保留 30 天，并允许用户在高级设置中调整 1-365 天。
+- 活动日志、屏幕检查日志和运行日志默认保留 30 天，并允许用户在高级设置中调整 1-365 天。
 
 验收标准：
 
 - JSON 写入不会留下半文件。
 - 读取损坏状态时应用仍可启动。
 - 用户数据不会被静默覆盖。
-- 活动日志、屏幕监控日志和运行日志不会无限增长，旧记录会按保留周期裁剪。
+- 活动日志、屏幕检查日志和运行日志不会无限增长，旧记录会按保留周期裁剪。
 
 当前执行进展（2026-06-30）：
 
@@ -206,7 +206,7 @@
 - `migrateChatState()` 会跳过 `callAuditLog` 中 `null`、字符串、未知事件、缺少 `from/to/callId` 的异常审计项，并只保留通话生命周期审计字段，不保留 SDP 或 ICE candidate。
 - 已新增 `docs/storage-recovery.md` 记录当前存储恢复机制和后续迁移入口。
 - 已新增 `src/jsonl-retention.js`，为本地 JSONL 日志和分级运行日志提供按保留周期原子裁剪的通用写入 helper。
-- 已为 `activity.jsonl`、`screen-monitor.jsonl` 和 `focus-pet.log` 增加本地保留周期：默认 30 天，高级设置可配置 1-365 天；每次追加活动样本、屏幕监控样本或运行日志条目后会按保留窗口原子重写日志，时间不可解析的历史 JSONL 行会保留，避免因旧数据格式不完整而静默丢弃。
+- 已为 `activity.jsonl`、`screen-monitor.jsonl` 和 `focus-pet.log` 增加本地保留周期：默认 30 天，高级设置可配置 1-365 天；每次追加活动样本、屏幕检查样本或运行日志条目后会按保留窗口原子重写日志，时间不可解析的历史 JSONL 行会保留，避免因旧数据格式不完整而静默丢弃。
 - `focus-pet.log` 通过 `writeRuntimeLog()` 接入保留周期，主进程和启动监督脚本都会传入当前 `activityRetentionDays`；旧的 `[time] message` 文本行会被解析为兼容日志，保留窗口内的旧格式行不会被丢弃。
 
 当前 3.3 验收状态：
@@ -215,7 +215,7 @@
 - 读取损坏状态时应用仍可启动：已完成。
 - 用户数据不会被静默覆盖：已完成。
 - schema version、显式迁移入口和自动备份：已完成。
-- 活动日志、屏幕监控日志和运行日志默认 30 天保留且可配置 1-365 天：已完成。
+- 活动日志、屏幕检查日志和运行日志默认 30 天保留且可配置 1-365 天：已完成。
 
 ### 3.4 可观测性和诊断
 
@@ -258,7 +258,7 @@
 - 摘要新增 `activity`，从 `activity.jsonl` 输出样本总数、状态计数和最近最多 5 条状态判断摘要。
 - `activity.recentDecisions` 只输出状态、时间、原因分类、固定说明、置信度和是否存在 App/标题/任务关联，不输出前台 App 名称、窗口标题原文、当前任务文本或原始 reason。
 - 摘要不输出任务全文、聊天正文、截图 data URL、API key、session token、邀请码或 LLM endpoint/model 原文。
-- 摘要中的屏幕监控和复盘 LLM 配置会区分 `apiKeyRequired` 和 `apiKeyConfigured`，避免 Ollama、本机 OpenAI-compatible 或 `local-only` 模式被误读为缺少 API key。
+- 摘要中的屏幕检查和复盘 LLM 配置会区分 `apiKeyRequired` 和 `apiKeyConfigured`，避免 Ollama、本机 OpenAI-compatible 或 `local-only` 模式被误读为缺少 API key。
 - 运行日志写入、摘要读取和 `appendErrorThing()` 错误日志写入都会复用 `sanitizeLogText()`，替换 Bearer token、长 token、env secret 赋值、URL、图片 data URL、当前任务/前台上下文键值（如 `currentTask`、`frontmost`、`screenEndpoint`、`reviewEndpoint`、`endpoint`）和本地绝对路径；诊断包不会包含原始运行日志。
 - 诊断包输出目录默认只保留最新 20 个标准命名诊断包，避免发布前预检和排障重复执行后产物无限累积。
 - 摘要新增 `chat.websocket`，只输出 WebSocket 是否启用/活跃、客户端数量、Origin 策略、额外允许 Origin 数量、是否允许无 Origin/`file://` 和 CORS 是否通配，不输出具体 Origin、WebSocket URL、token 或 peer id。
@@ -375,7 +375,7 @@
 
 - 基础：开机启动、提醒频率、宠物强度。
 - 专注判断：工作/学习/娱乐规则、App 列表。
-- AI：屏幕监控、截图间隔、LLM、连通性测试。
+- AI：屏幕检查、截图间隔、LLM、连通性测试。
 - 社交：邀请码、共享范围、文件大小、通话配置。
 - 高级：更新源、日志、诊断包、存储路径、实验功能。
 
@@ -389,7 +389,7 @@
 - 设置面板已拆为基础、判断、AI、社交和高级五个分组，首次打开默认停留在基础分组。
 - 基础分组保留自动弹提醒、开机启动、提醒冷却、空闲提醒和宠物强度。
 - 判断分组集中工作/学习/游戏/分心关键词，以及工作 App、游戏 App 列表。
-- AI 分组集中屏幕监控、监控间隔、LLM endpoint/model、复盘 LLM、LLM 自检、测试监控和屏幕权限入口，并标记为高风险能力组。
+- AI 分组集中屏幕检查、检查间隔、LLM endpoint/model、复盘 LLM、LLM 自检、测试检查和屏幕权限入口，并标记为高风险能力组。
 - 社交分组集中媒体上限、语音快捷键，并提示邀请码、外部会话和通话配置由聊天面板管理。
 - 高级分组集中更新源、自动检查更新、数据目录、诊断摘要和权限引导，并标记为高风险能力组。
 - 已补充测试，覆盖分组 DOM、默认激活分组、高风险分组标记、分组切换逻辑、数据目录入口、诊断摘要入口和样式约束。
@@ -426,7 +426,7 @@
 - 已新增 toolbar 的“引导”入口，打开后进入独立新手引导面板。
 - 新手引导包含基础、增强、高级三张模式卡片。
 - 每个模式都说明“会采集什么”“不会采集什么”“数据保存在哪里”“是否会外发”。
-- 基础模式聚焦任务、宠物和前台 App 判断，提供一键完成按钮；完成时会关闭屏幕监控、复盘 LLM 和自动更新，并把完成状态写入本地 `localStorage`。
+- 基础模式聚焦任务、宠物和前台 App 判断，提供一键完成按钮；完成时会关闭屏幕检查、复盘 LLM 和自动更新，并把完成状态写入本地 `localStorage`。
 - 增强模式只跳转到“判断”设置分组，引导用户配置工作/学习/娱乐关键词和复盘相关判断，不自动开启高级能力。
 - 高级模式标记为默认关闭，只跳转到 AI 设置分组查看屏幕 LLM、社交监督和 WebRTC 相关入口，不主动启用。
 - 已补充测试，覆盖三层模式文案、四项说明、基础模式完成动作、高级默认关闭和默认设置中的高级开关状态。
@@ -470,14 +470,14 @@
 
 当前执行进展（2026-06-30）：
 
-- 屏幕监控 prompt 已改为要求视觉 LLM 只输出结构化 JSON，字段包含 `state`、`activity_summary`、`task_relevance`、`evidence`、`confidence`、`privacy_risk`、`suggested_intervention`、`reasoning_visible`。
+- 屏幕检查 prompt 已改为要求视觉 LLM 只输出结构化 JSON，字段包含 `state`、`activity_summary`、`task_relevance`、`evidence`、`confidence`、`privacy_risk`、`suggested_intervention`、`reasoning_visible`。
 - `normalizeScreenAnalysis()` 已支持新 schema，同时保留旧 `status/activity/reason/suggestion` 输出兼容。
 - 新 schema 校验失败时会降级为 `unknown`，`suggestedIntervention` 固定为 `none`，用户可见解释为“LLM 输出不符合结构化 schema”。
 - 当 `confidence < 0.75` 时会标记 `lowConfidence: true`，并把 `suggestedIntervention` 降为 `none`，只展示状态，不主动触发强提醒。
-- 屏幕监控成功结果中的 `distracted` 用户可见消息已统一为“可能偏离当前任务”，避免重新出现“跑偏”等强提醒措辞。
+- 屏幕检查成功结果中的 `distracted` 用户可见消息已统一为“可能偏离当前任务”，避免重新出现“跑偏”等强提醒措辞。
 - LLM 请求增加超时策略；超时返回 `status: timeout`，并丢弃本次截图结果，不把截图 data URL 带入返回值。
 - 成功结果会记录截图策略摘要：缩略图尺寸、低细节请求、不写入磁盘、请求超时时间。
-- 主进程屏幕监控日志只记录状态、活动摘要、结构化字段、截图策略和共享媒体 id，不写入截图 data URL。
+- 主进程屏幕检查日志只记录状态、活动摘要、结构化字段、截图策略和共享媒体 id，不写入截图 data URL。
 - 已补充测试，覆盖结构化 schema、无效 schema 降级、低置信度降级、低打扰最终消息、prompt 字段、请求超时丢弃。
 
 当前 4.5 验收状态：
@@ -545,14 +545,14 @@
 - Ollama endpoint 可从 `http://127.0.0.1:11434` 自动归一化到 `/v1/chat/completions`。
 - Ollama 和本机 provider 不要求 API key，请求不会发送空的 `Authorization` 头。
 - `local-only` 模式会拒绝非本机回环地址的 LLM endpoint。
-- 屏幕监控、复盘 LLM、LLM 连通性自检和诊断摘要均已接入 provider 信息。
+- 屏幕检查、复盘 LLM、LLM 连通性自检和诊断摘要均已接入 provider 信息。
 - 诊断摘要只输出 provider、本地/云端状态、API key 是否必需和配置是否存在，不输出 endpoint/model 原文。
 
 当前 5.2 验收状态：
 
 - Ollama：已完成基础 OpenAI-compatible 接入。
 - 本地文本分类模型：由现有本地规则判断承载，LLM 侧已补本机 OpenAI-compatible provider。
-- 本地视觉模型：已完成屏幕监控本机 provider 接入。
+- 本地视觉模型：已完成屏幕检查本机 provider 接入。
 - 无云端模式：已完成 `local-only` 配置拦截。
 - 本地优先作为隐私卖点：已在 AI 设置、系统文档和诊断摘要中体现。
 
@@ -560,55 +560,50 @@
 
 权限级别：
 
-- 只共享在线状态。
-- 共享工作/学习/休息状态。
-- 共享状态摘要。
-- 共享屏幕分析摘要。
+- Peer 只回读在线状态、聊天消息和通话状态。
+- Owner 本机可以记录工作/学习/休息状态。
+- Owner 本机可以记录状态摘要。
+- Owner 本机可以记录屏幕分析摘要。
 
-默认只共享最小状态，不共享 App 名称、窗口标题或历史摘要。
+默认只让 peer 看到最小状态，不向 peer 下发 App 名称、窗口标题、历史摘要或截图分析结果。
 
 详细方案：
 
-- 设置项：新增 `socialActivityShareLevel`，默认 `presence`。
-- `presence`：只让对端看到在线/离线，不下发活动快照，不下发活动历史。
-- `status`：只共享当前状态枚举和通用文案，例如专注中、学习中、休息中、游戏中、可能偏离。
-- `summary`：共享当前状态摘要、建议和置信度，但不共享当前任务、前台 App、窗口标题、截图媒体或历史。
-- `screen-summary`：共享屏幕分析摘要、原因、建议、复盘 insight 和最近活动历史；仍不向 peer 暴露当前任务、前台 App、窗口标题和截图媒体。
-- 服务端统一在 `clientStateForAuth()` 和 WebSocket `activity` 事件出站前降级，不依赖前端隐藏字段。
+- 设置项：保留 `socialActivityShareLevel`，默认 `presence`，但它只影响 owner 本机记录策略，不再让 peer 回读活动摘要。
+- `presence`：peer 只看到在线/离线，不下发活动快照，不下发活动历史。
+- `status`：owner 本机可记录当前状态枚举和通用文案，例如专注中、学习中、休息中、游戏中、可能偏离。
+- `summary`：owner 本机可记录当前状态摘要、建议和置信度。
+- `screen-summary`：owner 本机可记录屏幕分析摘要、原因、建议、复盘 insight 和最近活动历史。
+- 服务端统一在 `clientStateForAuth()`、`messageForAuth()` 和 WebSocket `activity` 事件出站前阻断 peer 活动回读，不依赖前端隐藏字段。
 - owner 本机状态和本地 activity log 保留完整数据，用于本机复盘和调试。
 - 本阶段不实现隐私模式、敏感 App 列表、窗口标题脱敏和用户纠错机制。
 
-当前执行进展（2026-06-30）：
+当前执行进展（2026-07-02）：
 
-- 设置系统已新增 `socialActivityShareLevel`，并在社交设置页提供四档选择。
-- 聊天服务已新增 `sharedActivityForLevel()`，统一处理 peer 端活动快照降级。
-- Peer 默认 `presence` 下只保留消息会话和在线状态，`activities` 与 `activityLog` 为空。
-- `status`、`summary`、`screen-summary` 三档已分别限制字段范围。
-- Peer 自身活动出站也已复用同一共享契约降级：`presence` 始终不下发活动快照或历史；`status`、`summary` 不下发活动历史；`screen-summary` 只下发降级后的摘要历史，不透传 `currentTask`、`frontmost`、`sourceName`、`media` 或完整 review。
-- Peer 端不接收内部采集源名称 `sourceName`。
-- `summary` 和 `screen-summary` 的 peer 可见 `message` 只由允许共享的活动摘要生成，不使用内部活动快照的自定义 `message`。
-- `screen-summary` 的复盘信息只向 peer 下发 `review.insight`，不会共享复盘 `summary`、`petMessage`、`tone`、`status` 或 `ok`。
-- 桌面端和远端社交端的 peer 活动视图已收敛到共享契约字段，不再渲染当前任务、前台 App、窗口标题或截图媒体。
-- 聊天消息内的结构化 `messages[*].activity` 已复用同一共享级别降级规则，避免通过消息列表或 WebSocket `message` 事件绕过活动边界；peer 自己发送的 activity 消息返回给该 peer 时也只保留共享契约字段。
-- Owner 尚无活动快照时，`status`、`summary` 和 `screen-summary` 档位会返回空活动，不会产生服务端错误或占位泄露。
-- WebSocket 活动事件已按同一 peer 出站契约过滤，避免绕过 `/api/state` 的权限边界；`presence` 不发送 activity 事件，peer 自身活动也不会通过完整 payload 快捷分支绕过字段白名单。
-- `distracted` 的 peer 侧通用状态文案已统一为“可能偏离”，避免社交监督里出现更强的“跑偏”措辞。
-- 活动状态已支持 `work`、`study`、`rest`、`game`、`distracted`、`unknown`。
+- 社交端已改为 Owner / Peer 模型。
+- Owner 是本机侧，保留完整活动快照、屏幕分析结果和本机复盘数据。
+- Peer 是远端好友客户端，公开下载包只提供加入会话、消息、语音消息和 WebRTC 语音/视频。
+- Peer 的 `/api/state` 中 `activities` 恒为空对象，`activityLog` 恒为空数组，不随 `socialActivityShareLevel` 改变。
+- Peer 不接收 WebSocket `activity` 事件。
+- Peer 的 `messages[*].activity` 恒为 `null`，避免通过消息列表绕过活动边界。
+- Peer 即使提交自己的活动快照，也不会从服务端回读该快照；该数据只进入 owner 本机视图。
+- 远端聊天/通话客户端已移除“对方正在做什么”/截图分析面板。
+- 公开发布默认使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；`npm run release:mac:remote-client` 保留为可选远端聊天/通话客户端包，避免把 `/client` 包误当成桌宠发布。
 - 已补单元测试覆盖默认最小共享、四档共享字段边界、设置归一化和设置页接线。
 
 当前 5.3 验收状态：
 
-- 默认只共享在线状态：已完成。
-- 共享工作/学习/休息状态：已完成。
-- 共享状态摘要：已完成。
-- 共享屏幕分析摘要：已完成。
+- Peer 默认只回读在线状态、聊天消息和通话状态：已完成。
+- Owner 本机可保留工作/学习/休息状态：已完成。
+- Owner 本机可保留状态摘要：已完成。
+- Owner 本机可保留屏幕分析摘要：已完成。
 - 不共享 App 名称、窗口标题、截图媒体或当前任务给 peer：已完成。
 - 不共享内部采集源名称 `sourceName` 给 peer：已完成。
 - 不共享内部活动自定义 message 给 peer：已完成。
 - 不共享复盘 summary、petMessage、tone、status 或 ok 给 peer：已完成。
-- Peer 活动 UI 不消费当前任务、前台 App、窗口标题或截图媒体字段：已完成。
-- 消息内结构化 activity 不绕过社交共享级别：已完成。
-- 缺失 owner 活动快照时各共享档位稳定返回空活动：已完成。
+- Peer 活动 UI 已从远端聊天/通话客户端移除：已完成。
+- 消息内结构化 activity 不绕过 Owner / Peer 边界：已完成。
+- 缺失 owner 活动快照时各档位稳定返回空活动：已完成。
 - Peer 自身活动不绕过共享契约字段白名单：已完成。
 
 ## 6. 不建议早期投入
@@ -692,7 +687,7 @@
 - 已继续执行 P0 3.4 的一部分：`cleanDiagnosticText()` 和 `sanitizeLogText()` 已补齐 `apiKey`、`authToken`、`sessionToken`、`inviteCode` 等 camelCase/snake_case/kebab-case secret key 赋值清洗，避免非 env 命名的本地密钥、owner token、peer session token 或邀请码进入诊断文本与运行日志摘要。
 - 已继续执行 P0 3.4 的一部分：`sanitizeLogText()` 已覆盖 `/Users`、`/private`、`/tmp`、`/var/folders` 和 Windows drive-letter 本地绝对路径，运行日志与 `appendErrorThing()` 只保留 `[local-path]` 标签，避免错误日志或运行日志回显本机目录结构。
 - 已继续执行 P0 3.4 的一部分：诊断摘要 `recentErrors` 新增 `closedByLater` 和 `open` 标记，被后续同问题已解决记录关闭的历史“未解决”项不会再被误读为仍开放；闭环判定优先使用内部完整“问题描述 + 发生位置”key，描述模糊匹配只允许在发生位置兼容时作为兜底，避免相同摘要但不同文件/位置的问题被误闭环，且内部 key 不输出。
-- 已继续执行 P0 3.4 的一部分：诊断摘要的屏幕监控和复盘 LLM 配置新增 `apiKeyRequired`，和 `apiKeyConfigured` 分开输出；本地模型、Ollama 和 `local-only` 模式会明确标记 API key 非必需，同时仍不输出 endpoint、model 或 key 原文。
+- 已继续执行 P0 3.4 的一部分：诊断摘要的屏幕检查和复盘 LLM 配置新增 `apiKeyRequired`，和 `apiKeyConfigured` 分开输出；本地模型、Ollama 和 `local-only` 模式会明确标记 API key 非必需，同时仍不输出 endpoint、model 或 key 原文。
 - 已继续执行阶段 4 的一部分：任务模型增强、当前任务选择解释、手动设为当前任务入口、任务相关 App/关键词参与状态判断、任务维度复盘、行动建议生成和任务模型文档。
 - 已继续执行阶段 5 的一部分：设置面板分层、AI/社交/高级高风险能力归组、设置内数据目录和诊断摘要入口、新手引导三层模式和基础模式一键完成。
 - 已继续执行阶段 5 的一部分：新增 `npm run release:preflight`，默认打印发布前检查清单，`--run fast` 执行 `npm test`、`npm run check`、`node scripts/release-preflight.js --check diagnostics-summary-output`、`npm run diagnostics:bundle -- --output-dir output/diagnostics/preflight`、`node scripts/release-preflight.js --check diagnostics-bundle-output`、`node scripts/release-preflight.js --check package-scripts`、`node scripts/release-preflight.js --check docs-boundary`、`node scripts/release-preflight.js --check optimization-plan` 和 `node scripts/release-preflight.js --check error-log`；CLI 也兼容 `--run=fast` 与 `--check=error-log` 等号写法，避免常见参数形式被误解析为空。
@@ -706,8 +701,9 @@
 - 已继续执行阶段 5 的一部分：`optimization-plan` 作为 fast 自动 gate，会检查必需优化章节、验收状态段、空验收段、未完成验收项和本轮排除项；空验收段只返回 `emptyAcceptanceSections` 的章节编号；验收项中的“未完成”“部分完成”“待完成”“进行中”“尚未完成”“未达成”“未通过”都会被视为未达成，即使写在冒号、括号、破折号或空格后也会被识别，且检查输出只包含章节编号和行号，不回显计划正文。
 - 已继续执行阶段 5 的一部分：`error-log` 从人工复核升级为 fast 自动 gate，会检查 `docs/errorThing.md` 存在、跳过顶部 `## [时间]` 模板、校验全部真实记录字段完整、确认最新状态为已解决，并扫描是否存在未被后续同问题已解决记录关闭的开放未解决项；QA 已通过时的 Electron/Chromium GPU 退出噪声作为非阻断观察项处理，检查输出只返回行号、字段名和时间，不回显错误正文。
 - 已继续执行阶段 5 的一部分：`--run full` 新增 `screen-pipeline` gate，会在桌面渲染 QA 后执行 `npm run test:screen-pipeline`，用于发布前确认手动屏幕分析、结构化 LLM 输出和复盘 LLM 串联。
-- 已继续执行阶段 5 的一部分：`--run package` 的 macOS package 清单显式包含 `mac-notarization`，在本地打包、签名校验之外列出 `npm run notarize:mac && npm run verify:mac`，避免发布流程漏掉已有公证脚本，并在 staple 后再次执行 Gatekeeper/签名验证。
-- 已继续执行阶段 5 的一部分：发布前清单新增 `mac-remote-client-package` 人工条件项，显式列出 `npm run package:mac:remote-client`；该步骤依赖部署后的 HTTPS `REMOTE_CLIENT_URL`，因此只在清单展示并由发布执行者单独运行，不随 `--run package` 自动执行。
+- 已继续执行阶段 5 的一部分：`--run package` 的 macOS package 自动组对齐当前公开发布路径，只执行 `npm run release:mac` 生成 ad-hoc signed DMG/ZIP/manifest；`mac-package`、`mac-signing` 和 `mac-notarization` 仍保留在清单里作为人工步骤，Developer ID 签名和公证只用于后续 Apple-notarized build。
+- 已继续执行阶段 5 的一部分：普通公开下载改为使用 `npm run release:mac` 生成完整桌宠 DMG/ZIP/manifest；发布前清单保留 `mac-remote-client-release` 人工条件项，显式列出 `npm run release:mac:remote-client`，但该步骤只用于可选远端聊天/通话客户端，依赖部署后的 HTTPS `/client` 入口和 `REMOTE_CLIENT_URL`，不随 `--run package` 自动执行。`package:mac:remote-client` 可单独生成 `.app`。
+- 已继续执行阶段 5 的一部分：更新体验从“打开 GitHub Release 页面”升级为“宠物气泡和系统通知提醒，用户确认后直接下载并打开最新 DMG/ZIP”；应用仍不会静默替换自身，避免在 ad-hoc signed / 未公证包里制造不可控安装链路。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包的 `REMOTE_CLIENT_URL` 校验收紧为 HTTPS 且路径必须是 `/client` 或 `/client/...`，避免 `/client-...` 这类相似路径被误打包；校验函数已可导入测试。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包内的媒体权限校验从字符串前缀匹配改为解析请求 URL origin 后与 `REMOTE_CLIENT_URL` 精确同源比较，避免相似域名获得麦克风/摄像头权限。
 - 已继续执行阶段 5 的一部分：远端社交客户端 mac 包内的外链和导航边界已收紧，内嵌窗口只保留同源 `/client` 页面，跳出该范围的 http/https 导航交给系统浏览器，非 http/https 外链不会调用 `shell.openExternal()`。
@@ -732,7 +728,7 @@
 - 已继续执行体验优化的一部分：`pet:generate-animations` 改为通过 `scripts/run-pet-animation-generator.js` 启动，优先使用带 Pillow 的 Python，系统 `python3` 缺 Pillow 时会自动回退到 Codex bundled Python，避免资源生成命令在当前环境不可执行。
 - 已继续执行体验优化的一部分：宠物分享素材已重构为短发黑发、米白针织毛衣、浅色洞洞鞋小人形象的全身图片包，`src/assets/pets/nervy-sci-fi-kid/images/source` 保存 24 张由参考图特征生成得到的源 PNG，`images/frames` 保存 190 张由这些新图生成的动作帧；聊天动图托盘和主进程分享清单已扩展到 21 个独立 GIF 和一个全身状态合集 GIF；`animation-manifest.json` 对 spritesheet、imagePack 和 interactionGifs 统一标记 `identity: elys-short-haired-sweater-girl`、`fullBody: true`、`sourceType: generated-image-pack` 和 `usesBaseSpritesheet: false`，并将标准 QA 接触表刷新到 `output/hatch-pet/nervy/qa/contact-sheet.png`，避免继续把旧 spritesheet 裁帧当作新增图片，也避免再混入旧小人、星核机器人或动物形象。
 - 已继续执行架构优化的一部分：桌面主进程的 `chat-service` 从顶层常驻依赖改为 `getChatService()` 懒加载，并通过 `ensureChatServiceStarted()` 在聊天、宠物动图分享和屏幕活动摘要同步时按需启动；渲染端取消启动即连接聊天 WebSocket，改为打开聊天或发送消息时连接；宠物 GIF 托盘关闭、切换面板或折叠桌宠时会释放预览图片节点；Electron 窗口启用后台节流并关闭拼写检查，降低基础运行内存占用。
-- 已继续执行架构优化的一部分：主进程的 diagnostics、screen-monitor 和 llm-self-check 从顶层依赖改为 getter 懒加载，只有诊断、屏幕监控采样或 LLM 自检触发时才加载；`settings:update` 只在聊天服务已加载时同步社交运行态设置，避免保存设置拉起社交模块；diagnostics 内部的 chat-service 依赖也改为按需获取，避免诊断模块导入阶段间接加载社交服务。
+- 已继续执行架构优化的一部分：主进程的 diagnostics、screen-monitor 和 llm-self-check 从顶层依赖改为 getter 懒加载，只有诊断、屏幕检查采样或 LLM 自检触发时才加载；`settings:update` 只在聊天服务已加载时同步社交运行态设置，避免保存设置拉起社交模块；diagnostics 内部的 chat-service 依赖也改为按需获取，避免诊断模块导入阶段间接加载社交服务。
 
 不触碰：
 
