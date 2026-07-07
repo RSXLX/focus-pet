@@ -10667,3 +10667,10 @@
 - 上下文：发布完成后做远端校验，命令返回 Unknown JSON field；随后改用支持的 `tagName`、`name`、`publishedAt`、`url`、`targetCommitish`、`isDraft` 和 `assets` 字段重新查询。
 - 可能原因：当前 gh CLI 版本不支持 `isLatest` 字段，和此前 v1.0.1 查询时的限制一致。
 - 解决状态：已解决
+
+## [2026-07-07 10:50:30 CST]
+- 问题描述：查询 GitHub Release 时继续使用了当前 gh CLI 不支持的 JSON 字段 `isLatest`。
+- 发生位置：`gh release view v1.1.0 --json ... isLatest`
+- 上下文：发布 v1.1.0 后做远端校验，命令返回 Unknown JSON field；随后用 `gh release list --limit 5` 确认 v1.1.0 为 Latest，并改用支持的 `tagName`、`name`、`publishedAt`、`url`、`targetCommitish`、`isDraft`、`isPrerelease` 和 `assets` 字段完成资产校验。
+- 可能原因：当前 gh CLI 2.88.1 的 `release view` JSON 字段集合不包含 `isLatest`。
+- 解决状态：已解决
