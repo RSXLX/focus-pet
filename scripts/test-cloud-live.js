@@ -101,6 +101,44 @@ function waitForSocketEvent(socket, expectedEvent, timeoutMs, label) {
   }), timeoutMs, `${label} wait for ${expectedEvent}`);
 }
 
+function waitForSocketState(socket, predicate, timeoutMs, label, description) {
+  return withTimeout(new Promise((resolve, reject) => {
+    const onMessage = event => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (data.event === 'error') {
+        cleanup();
+        reject(new Error(`${label} websocket error event: ${data.payload || data.event}`));
+        return;
+      }
+      if (data.event !== 'state') return;
+      const payload = data.payload || {};
+      if (!predicate || predicate(payload)) {
+        cleanup();
+        resolve(payload);
+      }
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(`${label} websocket error`));
+    };
+    const cleanup = () => {
+      socket.removeEventListener('message', onMessage);
+      socket.removeEventListener('error', onError);
+    };
+    socket.addEventListener('message', onMessage);
+    socket.addEventListener('error', onError);
+  }), timeoutMs, `${label} wait for state${description ? `: ${description}` : ''}`);
+}
+
+function stateHasFriendOnline(state = {}, friendId = '', online = true) {
+  return (state.friends || []).some(friend => friend.id === friendId && Boolean(friend.online) === online);
+}
+
 async function runScreenCheck(baseUrl, timeoutMs) {
   const result = await withTimeout(requestJson(`${baseUrl}/api/screen-check`, {
     method: 'POST',
@@ -150,6 +188,14 @@ async function runCloudSmoke(options = {}) {
   if (!alice.signedIn || !bob.signedIn) throw new Error('cloud user registration did not sign in both users');
   if (!alice.self.friendCode || !bob.self.friendCode) throw new Error('cloud user registration did not return friend codes');
 
+  let invalidFriendCodeRejected = false;
+  try {
+    await addCloudFriend(`FP-MISSING-${suffix}`, { accountPath: alicePath, fetchImpl: fetch });
+  } catch {
+    invalidFriendCodeRejected = true;
+  }
+  if (!invalidFriendCodeRejected) throw new Error('invalid friend code was accepted');
+
   const pairedAlice = await addCloudFriend(bob.self.friendCode, { accountPath: alicePath, fetchImpl: fetch });
   const pairedBob = await addCloudFriend(alice.self.friendCode, { accountPath: bobPath, fetchImpl: fetch });
   if (!pairedAlice.friends.some(friend => friend.id === bob.self.id)) throw new Error('Alice does not list Bob after friend pairing');
@@ -157,17 +203,32 @@ async function runCloudSmoke(options = {}) {
 
   const aliceSocket = new WebSocket(pairedAlice.websocketUrl);
   const bobSocket = new WebSocket(pairedBob.websocketUrl);
+  let onlineRefresh = false;
+  let offlineRefresh = false;
   try {
-    const aliceStatePromise = waitForSocketEvent(aliceSocket, 'state', settings.timeoutMs, 'alice');
-    const bobStatePromise = waitForSocketEvent(bobSocket, 'state', settings.timeoutMs, 'bob');
+    const aliceOnlinePromise = waitForSocketState(
+      aliceSocket,
+      state => stateHasFriendOnline(state, bob.self.id, true),
+      settings.timeoutMs,
+      'alice',
+      'bob online'
+    );
+    const bobOnlinePromise = waitForSocketState(
+      bobSocket,
+      state => stateHasFriendOnline(state, alice.self.id, true),
+      settings.timeoutMs,
+      'bob',
+      'alice online'
+    );
     await Promise.all([
       waitForSocketOpen(aliceSocket, settings.timeoutMs, 'alice'),
       waitForSocketOpen(bobSocket, settings.timeoutMs, 'bob')
     ]);
     await Promise.all([
-      aliceStatePromise,
-      bobStatePromise
+      aliceOnlinePromise,
+      bobOnlinePromise
     ]);
+    onlineRefresh = true;
 
     const callId = `smoke-call-${suffix}`;
     const invitePromise = waitForSocketEvent(bobSocket, 'call-invite', settings.timeoutMs, 'bob');
@@ -181,6 +242,17 @@ async function runCloudSmoke(options = {}) {
     if (invite.from !== alice.self.id || invite.to !== bob.self.id || invite.callId !== callId) {
       throw new Error('call invite payload did not match expected users');
     }
+
+    const aliceSeesBobOffline = waitForSocketState(
+      aliceSocket,
+      state => stateHasFriendOnline(state, bob.self.id, false),
+      settings.timeoutMs,
+      'alice',
+      'bob offline'
+    );
+    bobSocket.close();
+    await aliceSeesBobOffline;
+    offlineRefresh = true;
   } finally {
     aliceSocket.close();
     bobSocket.close();
@@ -196,7 +268,10 @@ async function runCloudSmoke(options = {}) {
       alice: { id: alice.self.id, friendCode: alice.self.friendCode },
       bob: { id: bob.self.id, friendCode: bob.self.friendCode }
     },
+    invalidFriendCodeRejected,
     friendPairing: true,
+    onlineRefresh,
+    offlineRefresh,
     websocketSignaling: true,
     note: 'Smoke users are production Cloud users; run this command intentionally.'
   };

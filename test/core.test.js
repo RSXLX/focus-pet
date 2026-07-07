@@ -3732,6 +3732,10 @@ test('Focus Pet Cloud provides a Modal deployment target for zero-setup users', 
   assert.match(smokeScript, /addCloudFriend/);
   assert.match(smokeScript, /new WebSocket/);
   assert.match(smokeScript, /\/api\/screen-check/);
+  assert.match(smokeScript, /invalidFriendCodeRejected/);
+  assert.match(smokeScript, /stateHasFriendOnline/);
+  assert.match(smokeScript, /onlineRefresh/);
+  assert.match(smokeScript, /offlineRefresh/);
   assert.match(smokeScript, /waitForSocketEvent\(bobSocket, 'call-invite'/);
   assert.match(docs, /modal deploy modal_app\.py/);
   assert.match(docs, /GitHub Pages[\s\S]*不能承载 Node\/WebSocket 后端/);
